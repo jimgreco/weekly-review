@@ -1,0 +1,21 @@
+{
+  "name": "weekly-review",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Sunday-evening review across macros, workouts, spending, checklist and planner.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "review": "node src/cli.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.6.0",
+    "@aws-sdk/client-dynamodb": "^3.1163.0",
+    "@aws-sdk/lib-dynamodb": "^3.1163.0",
+    "pg": "^8.23.1"
+  }
+}
