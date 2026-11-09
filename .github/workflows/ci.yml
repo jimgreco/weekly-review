@@ -1,8 +1,10 @@
 name: CI and image
 
-# Tests every push. On main, also publishes an exact-commit ARM64 image to
-# GHCR. Nothing here touches the server: activation follows the shared
-# deploy repository's reviewed process.
+# Tests every push. On main, publishes an exact-commit ARM64 image to GHCR and
+# deploys it: .github/scripts/deploy-app.sh replaces only the weekly-review
+# container (drift-checked, health-checked, rolled back on failure). Until the
+# owner first activates the service (deploy/RUNBOOK.md), deploy is a no-op.
+# Pull requests never get secrets.
 on:
   push:
     branches: [main]
@@ -48,3 +50,42 @@ jobs:
           tags: ghcr.io/${{ github.repository }}:${{ github.sha }}
           cache-from: type=gha,scope=weekly-review-arm64
           cache-to: type=gha,mode=max,scope=weekly-review-arm64
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    concurrency:
+      group: weekly-review-production-deploy
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare pinned SSH
+        env:
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          EC2_SSH_KNOWN_HOSTS: ${{ secrets.EC2_SSH_KNOWN_HOSTS }}
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+        run: |
+          set -euo pipefail
+          for name in EC2_SSH_KEY EC2_SSH_KNOWN_HOSTS EC2_HOST EC2_USER; do
+            [ -n "${!name}" ] || { echo "::error::Missing production secret $name"; exit 1; }
+          done
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$EC2_SSH_KEY" > ~/.ssh/weekly-review
+          printf '%s\n' "$EC2_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/weekly-review ~/.ssh/known_hosts
+      - name: Replace only the weekly-review container
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/weekly-review -o UserKnownHostsFile=~/.ssh/known_hosts \
+            -o StrictHostKeyChecking=yes -o ConnectTimeout=30 "$EC2_USER@$EC2_HOST" \
+            "bash -s -- '$GITHUB_SHA'" < .github/scripts/deploy-app.sh
+      - name: Remove SSH material
+        if: always()
+        run: rm -rf ~/.ssh
