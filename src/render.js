@@ -32,6 +32,17 @@ function unavailable(name, source) {
   return `<p class="muted">${esc(why)}</p>`;
 }
 
+// Each section comes from another app's API. A response that says "ok" but is
+// missing fields must cost only its own section, not the page or the email.
+function section(name, render, source, ...rest) {
+  try {
+    return render(source, ...rest);
+  } catch (error) {
+    console.error(`[render] ${name} data has an unexpected shape:`, error.message);
+    return `<p class="muted">${esc(`Couldn't display ${name} this week.`)}</p>`;
+  }
+}
+
 function stat(label, value, sub = '', { text = false } = {}) {
   return `<div class="stat"><div class="label">${esc(label)}</div><div class="value${text ? ' text' : ''}">${value}</div>${sub ? `<div class="sub">${sub}</div>` : ''}</div>`;
 }
@@ -178,11 +189,11 @@ export function renderPage(review, { archiveHref } = {}) {
 <title>Week of ${esc(weekLabel(review.week))}</title><style>${CSS}</style></head><body><main>
 <header><h1>Week of ${esc(weekLabel(review.week))}</h1><p>Your weekly review</p></header>
 ${review.narrative ? `<div class="narrative">${paragraphs(review.narrative.text)}</div>` : ''}
-<section><h2>Nutrition &amp; recovery</h2>${nutrition(s.macros)}</section>
-<section><h2>Training</h2>${training(s.workouts)}</section>
-<section><h2>Spending</h2>${spending(s.spending, review.week)}</section>
-<section><h2>Habits</h2>${habits(s.checklist)}</section>
-<section><h2>Household</h2>${planner(s.planner)}</section>
+<section><h2>Nutrition &amp; recovery</h2>${section('Macrovana', nutrition, s.macros)}</section>
+<section><h2>Training</h2>${section('Rep, Mix, Burn', training, s.workouts)}</section>
+<section><h2>Spending</h2>${section('Spending', spending, s.spending, review.week)}</section>
+<section><h2>Habits</h2>${section('Ritual Cue', habits, s.checklist)}</section>
+<section><h2>Household</h2>${section('Week of Us', planner, s.planner)}</section>
 <footer>Generated ${esc(new Date(review.generatedAt).toLocaleString('en-US', { timeZone: 'America/New_York', dateStyle: 'medium', timeStyle: 'short' }))}${archiveHref ? ` · <a href="${esc(archiveHref)}">Past weeks</a>` : ''}</footer>
 </main></body></html>`;
 }
@@ -199,24 +210,21 @@ export function renderArchive(entries) {
 /** A one-line-per-source summary used in the email and plain-text part. */
 export function headlines(review) {
   const s = review.sources;
+  const lines = {
+    macros: (m) => `Nutrition: ${fmt(m.current.avgCalories)} kcal and ${fmt(m.current.avgProtein)} g protein a day over ${m.current.completeDays} complete days`,
+    workouts: (w) => `Training: ${w.current.sessionCount} sessions, ${w.current.workingSets} working sets${w.current.personalBestCount ? `, ${w.current.personalBestCount} PBs` : ''}`,
+    spending: (x) => `Spending: ${money(x.current.total)} (usual week ${money(x.weeklyBaseline)})`,
+    checklist: (c) => `Habits: ${c.doneCount} check-offs (${c.doneCountPrev} last week)`,
+    planner: (p) => `Household: ${p.current.doneCount} of ${p.current.taskCount} tasks done${p.overdue.length ? `, ${p.overdue.length} overdue` : ''}`,
+  };
   const out = [];
-  if (s.macros?.status === 'ok') {
-    const c = s.macros.current;
-    out.push(`Nutrition: ${fmt(c.avgCalories)} kcal and ${fmt(c.avgProtein)} g protein a day over ${c.completeDays} complete days`);
-  }
-  if (s.workouts?.status === 'ok') {
-    const c = s.workouts.current;
-    out.push(`Training: ${c.sessionCount} sessions, ${c.workingSets} working sets${c.personalBestCount ? `, ${c.personalBestCount} PBs` : ''}`);
-  }
-  if (s.spending?.status === 'ok') {
-    out.push(`Spending: ${money(s.spending.current.total)} (usual week ${money(s.spending.weeklyBaseline)})`);
-  }
-  if (s.checklist?.status === 'ok') {
-    out.push(`Habits: ${s.checklist.doneCount} check-offs (${s.checklist.doneCountPrev} last week)`);
-  }
-  if (s.planner?.status === 'ok') {
-    const p = s.planner;
-    out.push(`Household: ${p.current.doneCount} of ${p.current.taskCount} tasks done${p.overdue.length ? `, ${p.overdue.length} overdue` : ''}`);
+  for (const [key, line] of Object.entries(lines)) {
+    if (s[key]?.status !== 'ok') continue;
+    try {
+      out.push(line(s[key]));
+    } catch (error) {
+      console.error(`[render] ${key} headline skipped:`, error.message);
+    }
   }
   return out;
 }

@@ -1,34 +1,60 @@
 # Weekly Review
 
-Every Sunday at 6 PM it pulls the week from your other apps, has Claude write a short read of it, and emails you a summary with a private link to the full page.
+Every Sunday evening, a Claude Code cloud routine does three things:
 
-| Source | What it reads | How |
-|---|---|---|
-| Macrovana | daily calories/protein, Complete days, targets, weight, waist, Oura sleep & readiness | `macro_tracker`, read-only role |
-| Rep, Mix, Burn | finished sessions, working sets by muscle group, PBs, active program/phase | DynamoDB `GetItem`/`Query` only |
-| Spending | weekly total (same exclusion rule as `/api/stats`), top categories vs 8-week average, largest charges | `spending`, read-only role |
-| Ritual Cue | check-offs, missed, habits that dropped off | `daily_checklist`, read-only role |
-| Week of Us | tasks done, stuck (carried ≥2×), overdue, next week's tasks and priorities/meals/logistics | `common_week`, read-only role |
+1. Asks each of your apps for its week.
+2. Writes a short reading of it.
+3. Posts the result to a small review site, which emails you a private link to the full page.
 
-Each source fails on its own: a broken or missing source shows a short note and the rest of the review still goes out. If the Claude call fails or is declined, the email goes out without the narrative.
+```
+ cloud routine (Sunday 23:00 UTC)                         review site (EC2)
+ ┌──────────────────────────────────┐   POST /api/reviews  ┌───────────────────────┐
+ │ cli.js collect ──► 5 × GET        │ ───────────────────► │ store JSON, email link│
+ │ Claude writes the narrative       │   (ingest token)     │ serve /r/<week>?t=…   │
+ │ cli.js publish                    │                      └───────────────────────┘
+ └──────────────────────────────────┘
+          │ GET /api/weekly-summary?week=<monday>  (one read-only token per app)
+          ▼
+ Macrovana · Rep, Mix, Burn · Spending · Ritual Cue · Week of Us
+```
 
-## What it deliberately doesn't do
+| Source | What the endpoint returns |
+|---|---|
+| Macrovana | daily calories/protein, Complete days, targets, weight, waist, Oura sleep and readiness |
+| Rep, Mix, Burn | finished sessions, working sets by muscle group, PBs, active program and phase |
+| Spending | weekly total (same exclusion rule as `/api/stats`), top categories against the 8-week average, largest charges |
+| Ritual Cue | check-offs, misses, and habits that dropped off since last week |
+| Week of Us | tasks done, stuck (carried over at least twice) and overdue; next week's tasks and priorities, meals and logistics |
 
-- **Calendar events.** Week of Us fetches them live from Google with encrypted tokens; the review doesn't decrypt those.
-- **Checklist "due vs done" rates.** Ritual Cue's schedule rules live in the Swift app; re-implementing them here would drift. The review reports what was done, missed, and what dropped off since last week.
-- **Writes.** Postgres access is a SELECT-only role with `default_transaction_read_only=on`, and the pool sets it again per session. DynamoDB-local has no permissions, so read-only there is only enforced by the code (`src/sources/workouts.js` issues only `GetItem` and `Query`).
+`docs/weekly-summary-contract.md` defines the endpoint each app exposes. Each app checks its own token (stored as a SHA-256 hash, bound to one user's email), returns 404 for anything else, and only reads.
+
+Each source fails on its own. A broken, slow or unconfigured app shows a short note, and the rest of the review still goes out. The same holds for a response marked "ok" whose shape is wrong: only that section is left out.
+
+## Pieces
+
+- `src/sources.js` calls the five endpoints. It never follows redirects with a token.
+- `src/cli.js` has four commands:
+  - `collect` writes the review JSON;
+  - `publish` posts it with the narrative;
+  - `render` previews the page locally;
+  - `link` prints a week's private link on the site.
+- `routine/WEEKLY_REVIEW.md` holds the routine's steps and the narrative rules. The routine's prompt just points at it.
+- `src/server.js` is the review site:
+  - `POST /api/reviews` takes the ingest token, validates the review and stores it. It emails at most once per week, even if two posts race.
+  - `GET /r/<monday>?t=…` and `GET /archive?t=…` serve HMAC-signed private pages.
+  - `GET /health`.
+
+The site has no database access and no Claude key. The cloud routine has no database access either: it holds only the five read tokens and the ingest token.
 
 ## Run locally
 
 ```bash
-cp .env.example .env   # fill in
-npm install
-node --env-file=.env src/cli.js --week 2026-10-26 --no-send --out /tmp/review.html
+cp .env.example .env   # fill in the routine section
+node --env-file=.env src/cli.js collect --week 2026-11-02 --out /tmp/review.json
+node --env-file=.env src/cli.js render --in /tmp/review.json --out /tmp/review.html
 ```
 
-Flags: `--week <monday>` (default: last finished week), `--no-send`, `--no-narrative`, `--json` (print the collected data), `--link` (print the private links for a week).
-
-`npm start` runs the web server plus the scheduler (`SCHEDULER_ENABLED=false` to turn the scheduler off).
+The default week is the current week on a Sunday, and the last finished week on any other day.
 
 ## Tests
 
@@ -36,25 +62,16 @@ Flags: `--week <monday>` (default: last finished week), `--no-send`, `--no-narra
 npm test
 ```
 
-The SQL tests run only when `TEST_PG_BASE` points at a disposable Postgres with each app's schema and `test/fixtures/seed.mjs` data:
-
-```bash
-initdb -D /tmp/wr-pg -U admin --auth=trust && pg_ctl -D /tmp/wr-pg -o "-p 55433" start
-for d in macro_tracker spending daily_checklist common_week; do createdb -h 127.0.0.1 -p 55433 -U admin $d; done
-# create schemas with each app's own setup code (macros initDb, spending init_db, planner migrate.mjs),
-# plus: CREATE TABLE daily_app_state (id int PRIMARY KEY CHECK (id=1), data jsonb NOT NULL, updated_at timestamptz)
-node test/fixtures/seed.mjs postgresql://admin@127.0.0.1:55433
-psql postgresql://admin@127.0.0.1:55433/postgres -v ro_password="'test'" < sql/readonly-role.sql
-TEST_PG_BASE=postgresql://weekly_review_ro:test@127.0.0.1:55433 npm test
-```
+There are no dependencies to install. Each app's endpoint is tested in its own repository.
 
 ## Deploy
 
-1. Create the role on the shared Postgres (once): see the header of `sql/readonly-role.sql`.
-2. Add the service to `deploy/docker-compose.yml` behind a profile, on the same network as `db` and `dynamodb`, with a volume for `/data` and an `env_file`. See `deploy/compose-snippet.yml`.
-3. Point a proxy host (Nginx Proxy Manager) at port 8790 and set `PUBLIC_URL` to it.
-4. Send yourself last week's review to check: `docker compose exec weekly-review node src/cli.js`.
+See `deploy/RUNBOOK.md`. It covers:
+
+- the site container;
+- the five app tokens;
+- the cloud environment and the routine.
 
 ## Links and privacy
 
-Page links carry an HMAC token. There's no login, so anyone holding the link from the email can open that week's page. Pages send `Referrer-Policy: no-referrer`, `noindex` and `no-store`. Rotating `LINK_SECRET` invalidates every link. Reviews are stored as JSON files (mode 600) under `DATA_DIR/reviews`.
+Page links carry an HMAC token. There's no login, so anyone holding the link from the email can open that week's page. Pages send `Referrer-Policy: no-referrer`, `noindex` and `no-store`. Rotating `LINK_SECRET` invalidates every link. Reviews are stored as JSON files (mode 600) under `DATA_DIR/reviews`. The `publish` response never includes the private link, so it stays out of the routine's transcript.
