@@ -5,7 +5,7 @@ import { Readable } from 'node:stream';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { collectWeek } from '../src/sources.js';
+import { collectWeek, stripOura } from '../src/sources.js';
 import { loadConfig } from '../src/config.js';
 import { createPublisher, tokenMatches, validateSubmission } from '../src/ingest.js';
 import { createHandler } from '../src/server.js';
@@ -181,4 +181,13 @@ test('http: POST /api/reviews needs the ingest token and valid JSON', async () =
   // With ingest unset, the route doesn't exist even with a token.
   const off = createHandler({ ...config, ingestTokenSha256: null }, store);
   assert.equal((await call(off, { method: 'POST', url: '/api/reviews', headers: auth, body: submission() })).status, 404);
+});
+
+test('sources: Oura-derived macros fields never reach the review', () => {
+  const clean = stripOura({ status: 'ok', current: { avgCalories: 2000, sleepScore: 80, readinessScore: 70, avgSteps: 9000 },
+    previous: { sleepScore: 75 }, change: { sleepScore: 5, avgCalories: -10 } });
+  assert.deepEqual(clean.current, { avgCalories: 2000, sleepScore: null, readinessScore: null, avgSteps: null });
+  assert.equal(clean.previous.sleepScore, null);
+  assert.deepEqual(clean.change, { sleepScore: null, avgCalories: -10 });
+  assert.deepEqual(stripOura({ status: 'error' }), { status: 'error' });
 });

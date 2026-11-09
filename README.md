@@ -20,7 +20,7 @@ Every Sunday evening, a Claude Code cloud routine does three things:
 
 | Source | What the endpoint returns |
 |---|---|
-| Macrovana | daily calories/protein, Complete days, targets, weight, waist, Oura sleep and readiness |
+| Macrovana | daily calories/protein, Complete days, targets, weight, waist. Oura fields are always null, because Oura's API terms keep its data out of AI models. |
 | Rep, Mix, Burn | finished sessions, working sets by muscle group, PBs, active program and phase |
 | Spending | weekly total (same exclusion rule as `/api/stats`), top categories against the 8-week average, largest charges |
 | Ritual Cue | check-offs, misses, and habits that dropped off since last week |

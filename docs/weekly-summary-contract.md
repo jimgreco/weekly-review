@@ -60,6 +60,7 @@ Where the app has a read path (`store.read()`, a plain `SELECT`), use it.
 | checklist | `src/sources/checklist.js` → `collectChecklist` |
 | planner | `src/sources/planner.js` → `collectPlanner` |
 
+- **Macrovana:** `sleepScore`, `readinessScore`, `avgSteps` and `change.sleepScore` are always `null`, and `oura_documents` is never read. Oura's API agreement forbids passing Oura data, or values derived from it, to any AI/ML model, and the routine hands this payload to Claude. See macros `AGENTS.md`.
 - Rounding follows `src/stats.js`: `round(v, d) = Math.round(v * 10**d) / 10**d`, which rounds half up and is not banker's rounding. Python ports must reproduce this.
 - When the user is unknown, `data` is `{"status": "no-account"}` with HTTP 200. That way a misconfigured email shows up in the review instead of looking like an outage.
 - Internal errors return `500 {"error":"internal"}`, with no stack traces or SQL in the body.
