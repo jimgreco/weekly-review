@@ -1,93 +1,98 @@
-# Activating Weekly Review on the shared EC2 host
+# Turning on Weekly Review
 
-This runbook follows `consolidated-deploy`'s rules: GitHub never changes the server. Each step below is run by the owner over the existing pinned SSH connection (`ec2-user@` the host pinned in `~/.ssh/known_hosts`). Take the shared `~/deploy/.app-release.lock` for steps 3–5. Nothing here restarts other services, and no secret is printed.
+There are three parts, all done by the owner:
+
+1. Each app's weekly-summary endpoint.
+2. The review site on the shared EC2 host.
+3. The cloud routine.
+
+GitHub never changes the server. Server steps run over the existing pinned SSH connection, under the shared `~/deploy/.app-release.lock`, and never print a secret.
+
+## 0. Generate the tokens on your Mac
+
+Each token exists in plaintext in only one place: the routine's cloud environment. The apps and the site store only its SHA-256.
+
+```bash
+umask 077; mkdir -p ~/.weekly-review-tokens; cd ~/.weekly-review-tokens
+for name in macros workouts spending checklist planner ingest; do
+  openssl rand -base64 32 | tr -d '=+/\n' | cut -c1-40 > "$name.token"
+  printf %s "$(cat "$name.token")" | shasum -a 256 | cut -d' ' -f1 > "$name.sha256"
+done
+ls
+```
+
+The `.sha256` files are not secret. Copy each one to the host when its step needs it. Delete the folder once the routine environment holds the tokens.
+
+## 1. App endpoints
+
+Each app's `weekly-summary-endpoint` branch adds `GET /api/weekly-summary`. Merging deploys it through that app's normal release. The route is a 404 until its two variables are set, so the code can ship first.
+
+| App | Public origin | Compose service | Where its env lives |
+|---|---|---|---|
+| Macrovana | `https://macrovana.com` | `macros` | live compose env; `safe-compose-release.py` checks drift |
+| Rep, Mix, Burn | `https://repmixburn.com` | `workout_api` | live `.env`/override; `safe-compose-release.py` checks drift |
+| Spending | `https://spending-analyzer.jim-greco.com` | spending | production Compose, via `docs/release-runtime-cutover.md` |
+| Ritual Cue | `https://ritualcue.com` | `daily` | live compose env; `deploy-service.py` checks drift |
+| Week of Us | `https://weekofus.com` | `common-week` | `.github/deploy/common-week-apple.yml` env layer plus host `.env` |
+
+For each app:
+
+1. Add two variables to that service's live environment:
+   - `WEEKLY_SUMMARY_TOKEN_SHA256` = the contents of `<app>.sha256`;
+   - `WEEKLY_SUMMARY_EMAIL=jgreco@gmail.com`.
+2. Recreate only that service, e.g. `docker-compose up -d --no-deps <service>`. Make this a configuration change of its own, not part of a release, because the release helpers refuse to deploy while the running environment differs from the configured one.
+3. Check it from your Mac. The first command should print `404`; the second should print a JSON envelope with `"app":"<app>"`.
+
+   ```bash
+   curl -s -o /dev/null -w '%{http_code}\n' "https://<origin>/api/weekly-summary?week=2026-11-02"
+   curl -s -H "Authorization: Bearer $(cat ~/.weekly-review-tokens/<app>.token)" "https://<origin>/api/weekly-summary?week=2026-11-02" | head -c 300; echo
+   ```
+
+## 2. Review site
 
 Prerequisites:
-- The consolidated-deploy PR adding the `weekly-review` service is merged.
-- That main SHA has been staged with the repo's manual dispatch, and the active `docker-compose.yml` has been updated from it under its normal review.
-- `ghcr.io/jimgreco/weekly-review:<sha>` exists. It's published by this repo's CI on push to `main`.
 
-## 1. Check headroom
+- The consolidated-deploy change adding the `weekly-review` service is merged and staged under its normal review.
+- `ghcr.io/jimgreco/weekly-review:<sha>` exists. This repo's CI publishes it on every push to `main`.
+
+### 2a. Headroom
 
 ```bash
 free -m; df -h /
 ```
 
-The service is capped at 160 MB. Stop if available memory is under ~250 MB (the last audit saw ~342 MB) or if disk has less than 1 GB free.
+The site is capped at 160 MB. Stop if available memory is under about 250 MB or free disk is under 1 GB.
 
-## 2. Create the read-only database role
-
-```bash
-cd ~/deploy
-umask 077
-RO_PW="$(openssl rand -hex 24)"
-docker exec -i shared_db psql -U admin -d postgres -v ro_password="'$RO_PW'" < /path/to/weekly-review/sql/readonly-role.sql
-```
-
-Copy `sql/readonly-role.sql` to the host first, for example with `scp`. The script can be re-run safely; re-running it rotates the password.
-
-Verify the role, which should print one row and then a permission error:
+### 2b. `~/deploy/weekly-review.env` (mode 600)
 
 ```bash
-docker exec -e PGPASSWORD="$RO_PW" shared_db psql -h 127.0.0.1 -U weekly_review_ro -d spending -Atc "SELECT count(*) FROM tags"
-docker exec -e PGPASSWORD="$RO_PW" shared_db psql -h 127.0.0.1 -U weekly_review_ro -d spending -c "SET default_transaction_read_only=off" -c "DELETE FROM tags"
-```
-
-If `pg_hba.conf` rejects the new login, stop. Changing it is a separate, reviewed database change.
-
-## 3. Write `~/deploy/weekly-review.env` (mode 600)
-
-```bash
-cd ~/deploy
-umask 077
+cd ~/deploy && umask 077
 LINK_SECRET="$(openssl rand -base64 48 | tr -d '\n')"
 cat > weekly-review.env <<EOF
 REVIEW_EMAIL=jgreco@gmail.com
-REVIEW_TIMEZONE=America/New_York
-REVIEW_SEND_DAY=0
-REVIEW_SEND_HOUR=18
 PUBLIC_URL=https://review.jim-greco.com
 LINK_SECRET=$LINK_SECRET
-MACROS_DATABASE_URL=postgresql://weekly_review_ro:$RO_PW@db:5432/macro_tracker
-SPENDING_DATABASE_URL=postgresql://weekly_review_ro:$RO_PW@db:5432/spending
-DAILY_DATABASE_URL=postgresql://weekly_review_ro:$RO_PW@db:5432/daily_checklist
-PLANNER_DATABASE_URL=postgresql://weekly_review_ro:$RO_PW@db:5432/common_week
-PGSSL=false
-REVIEW_MODEL=claude-opus-5-5
+INGEST_TOKEN_SHA256=<contents of ingest.sha256>
 REVIEW_EMAIL_FROM=Weekly Review <notifications@weekofus.com>
-ANTHROPIC_API_KEY=
 RESEND_API_KEY=
 EOF
-unset RO_PW LINK_SECRET
+unset LINK_SECRET
 ```
 
-**Resend key.** The live Compose file does not pass `RESEND_API_KEY` to Week of Us, so there may be no planner key on the host to reuse. Check without printing it:
+Then set the Resend key from Week of Us's key without printing it. The host's compose `.env` holds it as `COMMON_WEEK_RESEND_API_KEY`:
 
 ```bash
-grep -l '^RESEND_API_KEY=.\+' ~/deploy/*.env ~/deploy/.env 2>/dev/null
+key="$(sed -n 's/^COMMON_WEEK_RESEND_API_KEY=//p' ~/deploy/.env)"
+[ -n "$key" ] && sed -i "s|^RESEND_API_KEY=.*|RESEND_API_KEY=$key|" weekly-review.env && echo set || echo "not found; paste a key with an editor"
+unset key
 ```
 
-If a file is listed, copy the line across:
+The From address must be on a domain verified in that Resend account.
 
-```bash
-grep '^RESEND_API_KEY=' <that file> | sed -i "s|^RESEND_API_KEY=.*|$(cat)|" weekly-review.env
-```
-
-If nothing is listed, paste a Resend key yourself with an editor. Its From domain must be verified in Resend.
-
-Add `ANTHROPIC_API_KEY` with an editor. Leave it blank to send numbers only.
-
-## 4. Data directory
-
-The container runs as uid 1000 with a read-only root filesystem.
+### 2c. Data directory and start
 
 ```bash
 mkdir -p ~/deploy/weekly-review-data && sudo chown 1000:1000 ~/deploy/weekly-review-data && chmod 700 ~/deploy/weekly-review-data
-```
-
-## 5. Start only this service
-
-```bash
 cd ~/deploy
 export WEEKLY_REVIEW_IMAGE=ghcr.io/jimgreco/weekly-review:<sha>
 docker-compose --profile weekly-review pull weekly-review
@@ -95,33 +100,46 @@ docker-compose --profile weekly-review up -d --no-deps weekly-review
 docker-compose --profile weekly-review ps weekly-review   # healthy within ~30s
 ```
 
-Persist `WEEKLY_REVIEW_IMAGE=...` in `~/deploy/.env`, the same way `COMMON_WEEK_IMAGE` is kept, so a later `up` doesn't fall back to `:unconfigured`.
+Persist `WEEKLY_REVIEW_IMAGE=...` in `~/deploy/.env`, the way `COMMON_WEEK_IMAGE` is kept.
 
-## 6. Public route
+### 2d. Public route
 
-1. **DNS:** add an `A` record for `review.jim-greco.com` pointing to the host's public IP.
-2. **Nginx Proxy Manager:** add a proxy host with these settings:
-   - domain `review.jim-greco.com`
-   - forward to `weekly-review`, port `8790`, scheme `http`
-   - request a Let's Encrypt certificate and turn on Force SSL
-3. **Check:** `curl -fsS https://review.jim-greco.com/health` should print `ok`.
+1. **DNS:** an `A` record for `review.jim-greco.com` pointing to the host's public IP.
+2. **Nginx Proxy Manager:** a proxy host for `review.jim-greco.com`. Forward to `weekly-review` on port `8790` over `http`, and turn on Let's Encrypt with Force SSL.
+3. **Check:** run `curl -fsS https://review.jim-greco.com/health` (prints `ok`). Then post without a token; this should print `404`:
 
-## 7. First review
+   ```bash
+   curl -s -o /dev/null -w '%{http_code}\n' -X POST https://review.jim-greco.com/api/reviews
+   ```
 
-Build last week's review without emailing it, then print its private link:
+## 3. Cloud routine
 
-```bash
-docker-compose --profile weekly-review exec weekly-review node src/cli.js --no-send
-docker-compose --profile weekly-review exec weekly-review node src/cli.js --link
-```
+1. At claude.ai/code, create a cloud environment named `weekly-review` with network access. Set these environment variables:
+   - `MACROS_API_URL=https://macrovana.com` and `MACROS_SUMMARY_TOKEN`
+   - `WORKOUTS_API_URL=https://repmixburn.com` and `WORKOUTS_SUMMARY_TOKEN`
+   - `SPENDING_API_URL=https://spending-analyzer.jim-greco.com` and `SPENDING_SUMMARY_TOKEN`
+   - `CHECKLIST_API_URL=https://ritualcue.com` and `CHECKLIST_SUMMARY_TOKEN`
+   - `PLANNER_API_URL=https://weekofus.com` and `PLANNER_SUMMARY_TOKEN`
+   - `REVIEW_SITE_URL=https://review.jim-greco.com` and `REVIEW_INGEST_TOKEN`
+   
+   Each token value comes from the matching `.token` file.
+2. Create the routine with that environment:
+   - repository: `jimgreco/weekly-review`
+   - cron: `0 23 * * 0`, i.e. Sunday 23:00 UTC, which is 6 pm EST or 7 pm EDT
+   - prompt: "Follow routine/WEEKLY_REVIEW.md in this repository exactly."
+   - tools: Bash, Read, Write
+3. Dry run on your Mac, with the same variables in a local `.env` (mode 600). Open the page and check the numbers against each app:
 
-Open the link and check the numbers against each app. Then send one:
+   ```bash
+   node --env-file=.env src/cli.js collect --out /tmp/review.json
+   node --env-file=.env src/cli.js render --in /tmp/review.json --out /tmp/review.html
+   ```
+4. Run the routine for real once, then confirm you received the email.
 
-```bash
-docker-compose --profile weekly-review exec weekly-review node src/cli.js
-```
+## Rotating or revoking
 
-After that, the scheduler sends every Sunday at 18:00 America/New_York.
+- **One app:** replace its `WEEKLY_SUMMARY_TOKEN_SHA256` and its token in the cloud environment. Clearing the variable turns that app's endpoint off; the review then shows the app as unavailable.
+- **Ingest:** replace `INGEST_TOKEN_SHA256` in `weekly-review.env` and recreate the container.
 
 ## Rollback
 
@@ -130,8 +148,4 @@ docker-compose --profile weekly-review stop weekly-review
 docker-compose --profile weekly-review rm -f weekly-review
 ```
 
-This touches nothing else. To revoke database access:
-
-```bash
-docker exec -i shared_db psql -U admin -d postgres -c "ALTER ROLE weekly_review_ro NOLOGIN"
-```
+This touches nothing else. Turn off the routine at claude.ai/code/routines.

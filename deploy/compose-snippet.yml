@@ -1,9 +1,8 @@
 # Proposed addition under `services:` in consolidated-deploy/docker-compose.yml.
 # Activation follows that repository's reviewed process; see deploy/RUNBOOK.md.
 #
-# Default network only: it reaches `db` and nginx-proxy, and deliberately not
-# the internal deploy_workout_data network, so workouts stay disabled until a
-# read-only path to workout data exists.
+# Default network only, for nginx-proxy. It needs no database: the weekly
+# routine collects the data from each app's API and posts the finished review.
   weekly-review:
     profiles: ["weekly-review"]
     image: ${WEEKLY_REVIEW_IMAGE:-ghcr.io/jimgreco/weekly-review:unconfigured}
@@ -13,7 +12,6 @@
         required: true
     environment:
       DATA_DIR: /data
-      WORKOUTS_ENABLED: "false"
     volumes:
       - ./weekly-review-data:/data
     expose: ["8790"]
@@ -22,4 +20,3 @@
     mem_limit: 160m
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
-    depends_on: [db]
