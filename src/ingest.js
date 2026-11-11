@@ -20,11 +20,11 @@ export function tokenMatches(expectedSha256, header) {
 
 class InvalidReview extends Error {}
 
-/** Returns a clean {review, send}, or throws InvalidReview. */
+/** Returns a clean {review, send, resend}, or throws InvalidReview. */
 export function validateSubmission(body) {
   const fail = (msg) => { throw new InvalidReview(msg); };
   if (!body || typeof body !== 'object') fail('body must be a JSON object');
-  const { review, narrative = null, send = false } = body;
+  const { review, narrative = null, send = false, resend = false } = body;
   if (!review || typeof review !== 'object') fail('review is required');
 
   let week;
@@ -50,6 +50,8 @@ export function validateSubmission(body) {
     };
   }
   if (typeof send !== 'boolean') fail('send must be true or false');
+  if (typeof resend !== 'boolean') fail('resend must be true or false');
+  if (resend && !send) fail('resend requires send');
 
   return {
     review: {
@@ -59,23 +61,25 @@ export function validateSubmission(body) {
       narrative: cleanNarrative,
     },
     send,
+    resend,
   };
 }
 
 /**
  * Save the review (replacing any earlier version of that week) and, if asked,
- * email it — at most once per week, whatever the routine retries.
+ * email it — at most once per week, whatever the routine retries. An explicit
+ * `resend` emails again (a deliberate, owner-requested repeat).
  */
 export function createPublisher(config, store, { sendImpl = sendEmail } = {}) {
   let queue = Promise.resolve(); // one publish at a time, so two retries can't both send
-  const publish = async ({ review, send }) => {
+  const publish = async ({ review, send, resend = false }) => {
     const existing = await store.load(review.week.start);
     review.receivedAt = new Date().toISOString();
     review.sentAt = existing?.sentAt ?? null;
     await store.save(review);
 
     const result = (sent) => ({ week: review.week.start, sentAt: review.sentAt, sent });
-    if (!send || review.sentAt) return result(false);
+    if (!send || (review.sentAt && !resend)) return result(false);
     if (!config.resendApiKey || !config.reviewEmail) {
       const error = new Error('email is not configured on the review site');
       error.status = 503;
@@ -86,7 +90,8 @@ export function createPublisher(config, store, { sendImpl = sendEmail } = {}) {
       from: config.emailFrom,
       to: config.reviewEmail,
       ...renderEmail(review, reviewUrl(config, review.week.start)),
-      idempotencyKey: `weekly-review-${review.week.start}`,
+      // A resend needs its own key, or Resend would treat it as the first send.
+      idempotencyKey: resend ? `weekly-review-${review.week.start}-resend-${review.receivedAt}` : `weekly-review-${review.week.start}`,
     });
     review.sentAt = new Date().toISOString();
     await store.save(review);
