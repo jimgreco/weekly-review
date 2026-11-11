@@ -191,3 +191,24 @@ test('sources: Oura-derived macros fields never reach the review', () => {
   assert.deepEqual(clean.change, { sleepScore: null, avgCalories: -10 });
   assert.deepEqual(stripOura({ status: 'error' }), { status: 'error' });
 });
+
+test('macros: Apple Health sleep survives the Oura strip and shows on the page', async () => {
+  const { renderPage } = await import('../src/render.js');
+  const day = (date) => ({ date, state: 'complete', calories: 2000, protein: 140, carbs: 200, fat: 70, fiber: 30 });
+  const current = { days: WEEK.days.map(day), loggedDays: 7, completeDays: 7, avgCalories: 2000, avgProtein: 140,
+    avgFiber: 30, weight: { count: 0, avg: null }, waistIn: null, sleepNights: 6, avgSleepHours: 7.2,
+    sleepScore: 81, readinessScore: 77, avgSteps: 9000 };
+  const macros = stripOura({ status: 'ok', targets: { calories: 2100, protein: 150, fiber: null, sleepHours: 8 },
+    current, previous: { ...current, avgSleepHours: 6.8 }, change: { avgSleepHours: 0.4, sleepScore: 3 } });
+  assert.equal(macros.current.avgSleepHours, 7.2);
+  assert.equal(macros.current.sleepNights, 6);
+  assert.equal(macros.change.avgSleepHours, 0.4);
+  assert.equal(macros.current.sleepScore, null);
+  assert.equal(macros.change.sleepScore, null);
+  const html = renderPage({ week: WEEK, generatedAt: '2026-11-08T23:00:00Z', narrative: null,
+    sources: { ...sources(), macros } });
+  assert.match(html, /Sleep \/ night/);
+  assert.match(html, /7\.2 h/);
+  assert.match(html, /6 nights · target 8\.0 h · \+0\.4 h/);
+  assert.doesNotMatch(html, /Sleep score|readiness/i);
+});

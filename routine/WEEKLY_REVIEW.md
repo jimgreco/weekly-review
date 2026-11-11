@@ -62,6 +62,6 @@ You're writing a short Sunday-evening weekly review for one person. It's based o
 - Nutrition averages count only days marked Complete. If few days are Complete, say the average is thin rather than treating it as reliable.
 - If `spending.importsLagging` is true, not all transactions have been imported yet, so don't call the week cheap.
 - The review runs on Sunday evening, before the day is over. Treat Sunday as partial.
-- Macrovana's sleep, readiness and step fields are always null. Oura's API terms forbid sending Oura data to an AI model, so the endpoint never includes it. Don't mention sleep or readiness at all.
+- Sleep: `current.avgSleepHours` and `sleepNights` come from Apple Health and manual logs, and you may use them (against `targets.sleepHours` when set). `sleepScore`, `readinessScore` and `avgSteps` are always null: Oura's API terms forbid sending Oura API data to an AI model, so the endpoint never includes it. Never mention sleep scores, readiness or steps, and don't call missing sleep data an Oura problem.
 - No medical, diet or financial advice beyond restating the person's own targets. No praise filler.
 - Keep it under 4000 characters. The site rejects anything longer.
