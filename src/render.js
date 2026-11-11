@@ -66,7 +66,7 @@ function nutrition(s) {
       ${stat('Complete days', `${c.completeDays}/7`, `${c.loggedDays} logged`)}
       ${c.weight.avg != null ? stat('Weight', `${fmt(c.weight.avg, 1)}`, `${c.weight.count} weigh-ins · ${esc(signed(s.change.weight, 1))}`) : ''}
       ${c.waistIn ? stat('Waist', `${fmt(c.waistIn.latest, 2)} in`, esc(c.waistIn.day)) : ''}
-      ${c.sleepScore != null ? stat('Sleep score', fmt(c.sleepScore), `readiness ${fmt(c.readinessScore)} · ${esc(signed(s.change.sleepScore))}`) : ''}
+      ${c.avgSleepHours != null ? stat('Sleep / night', `${fmt(c.avgSleepHours, 1)} h`, `${c.sleepNights} nights${t.sleepHours ? ` · target ${fmt(t.sleepHours, 1)} h` : ''}${s.change?.avgSleepHours != null ? ` · ${esc(signed(s.change.avgSleepHours, 1, ' h'))}` : ''}`) : ''}
     </div>
     <div class="chart" role="img" aria-label="Calories per day">${target}${bars}</div>
     <p class="note">Averages use Complete days only. Faded bars are days not marked Complete.</p>`;
