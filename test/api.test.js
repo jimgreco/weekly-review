@@ -222,3 +222,20 @@ test('sources: with AUTH_VIA_PROXY a URL alone is enough and no Authorization is
   assert.deepEqual(review.sources.workouts, { status: 'disabled' }, 'a token without a URL is still disabled');
   assert.equal(loadConfig({}).authViaProxy, false);
 });
+
+test('ingest: an explicit resend emails again with its own idempotency key', async () => {
+  const store = createStore(await mkdtemp(path.join(tmpdir(), 'wr-')));
+  const sent = [];
+  const config = { linkSecret: SECRET, publicUrl: 'https://review.example', reviewEmail: 'me@example.com',
+    resendApiKey: 'k', emailFrom: 'R <r@example.com>' };
+  const publish = createPublisher(config, store, { sendImpl: async (m) => { sent.push(m); return {}; } });
+  await publish(validateSubmission(submission()));
+  assert.equal((await publish(validateSubmission(submission()))).sent, false, 'a plain retry never re-emails');
+  const again = await publish(validateSubmission(submission({ resend: true })));
+  assert.equal(again.sent, true);
+  assert.equal(sent.length, 2);
+  assert.equal(sent[0].idempotencyKey, 'weekly-review-2026-11-02');
+  assert.match(sent[1].idempotencyKey, /^weekly-review-2026-11-02-resend-/);
+  assert.throws(() => validateSubmission(submission({ send: false, resend: true })), /resend requires send/);
+  assert.throws(() => validateSubmission(submission({ resend: 'yes' })), /resend must be/);
+});

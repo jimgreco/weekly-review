@@ -35,7 +35,7 @@ Each source fails on its own. A broken, slow or unconfigured app shows a short n
 - `src/sources.js` calls the five endpoints. It never follows redirects with a token.
 - `src/cli.js` has four commands:
   - `collect` writes the review JSON;
-  - `publish` posts it with the narrative;
+  - `publish` posts it with the narrative (`--send` emails once per week; `--resend` deliberately emails again);
   - `render` previews the page locally;
   - `link` prints a week's private link on the site.
 - `routine/WEEKLY_REVIEW.md` holds the routine's steps and the narrative rules. The routine's prompt just points at it.

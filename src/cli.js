@@ -63,7 +63,7 @@ async function main() {
       headers: config.ingestToken
         ? { Authorization: `Bearer ${config.ingestToken}`, 'Content-Type': 'application/json' }
         : { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ review, narrative, send: flag('--send') }),
+      body: JSON.stringify({ review, narrative, send: flag('--send') || flag('--resend'), resend: flag('--resend') }),
       redirect: 'error',
       signal: AbortSignal.timeout(30000),
     });
