@@ -30,6 +30,10 @@ export function loadConfig(env = process.env) {
     sources,
     siteUrl: (env.REVIEW_SITE_URL || env.PUBLIC_URL || '').replace(/\/$/, '') || null,
     ingestToken: env.REVIEW_INGEST_TOKEN || null,
+    // In the cloud routine, tokens live as network secrets: the agent proxy adds
+    // Authorization to requests for each host, so the session never holds them.
+    // Then a source or the site counts as configured by its URL alone.
+    authViaProxy: env.AUTH_VIA_PROXY === '1',
     fetchTimeoutMs: Number(env.SOURCE_TIMEOUT_MS || 20000),
   };
 }

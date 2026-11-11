@@ -4,13 +4,11 @@ A Claude Code cloud routine follows these instructions every Sunday evening. The
 
 The cloud environment provides these variables. Never print them, echo them, or write them to a file:
 
-- `MACROS_API_URL`, `MACROS_SUMMARY_TOKEN`
-- `WORKOUTS_API_URL`, `WORKOUTS_SUMMARY_TOKEN`
-- `SPENDING_API_URL`, `SPENDING_SUMMARY_TOKEN`
-- `CHECKLIST_API_URL`, `CHECKLIST_SUMMARY_TOKEN`
-- `PLANNER_API_URL`, `PLANNER_SUMMARY_TOKEN`
-- `REVIEW_SITE_URL`, `REVIEW_INGEST_TOKEN`
+- `MACROS_API_URL`, `WORKOUTS_API_URL`, `SPENDING_API_URL`, `CHECKLIST_API_URL`, `PLANNER_API_URL`, `REVIEW_SITE_URL`
+- `AUTH_VIA_PROXY=1` and `NODE_USE_ENV_PROXY=1`
 - optional: `REVIEW_TIMEZONE`, which defaults to America/New_York
+
+There are no tokens in the session. Each host's token is a network secret on the environment, which the agent proxy adds to requests for that host after they leave the session. Don't look for tokens, and don't try to add an `Authorization` header yourself.
 
 ## Steps
 
@@ -23,7 +21,8 @@ The cloud environment provides these variables. Never print them, echo them, or 
    node src/cli.js publish --in /tmp/review.json --narrative /tmp/narrative.md --model <your model id> --send
    ```
 
-   If it fails with a network error or a 5xx, wait 60 seconds and retry once. Re-publishing is safe: the site emails at most once per week. On a 4xx, don't retry; report the message.
+   If it fails with a network error or a 5xx, wait 60 seconds and retry once.
+   If `collect` reports every app as `HTTP 404 (endpoint off, or token mismatch)`, the network secrets aren't being applied: say so in the report, still publish, and don't retry. Re-publishing is safe: the site emails at most once per week. On a 4xx, don't retry; report the message.
 5. **Report** in at most five lines:
    - the week;
    - each app's status;

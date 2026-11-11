@@ -118,31 +118,50 @@ It needs a GitHub environment named `production` in `jimgreco/weekly-review` wit
 
 ## 3. Cloud routine
 
-1. At claude.ai/code, create a cloud environment named `weekly-review` with network access. Set these environment variables:
-   - `MACROS_API_URL=https://macrovana.com` and `MACROS_SUMMARY_TOKEN`
-   - `WORKOUTS_API_URL=https://repmixburn.com` and `WORKOUTS_SUMMARY_TOKEN`
-   - `SPENDING_API_URL=https://spending-analyzer.jim-greco.com` and `SPENDING_SUMMARY_TOKEN`
-   - `CHECKLIST_API_URL=https://ritualcue.com` and `CHECKLIST_SUMMARY_TOKEN`
-   - `PLANNER_API_URL=https://weekofus.com` and `PLANNER_SUMMARY_TOKEN`
-   - `REVIEW_SITE_URL=https://review.jim-greco.com` and `REVIEW_INGEST_TOKEN`
-   
-   Each token value comes from the matching `.token` file.
+The routine's session never holds a token. Each one is a **network secret** on the cloud environment: Anthropic's agent proxy adds `Authorization: Bearer <token>` to requests for that host after they leave the session, so even a prompt injection in the data can't read them.
+
+1. At claude.ai/code, open the environment selector under the message box → **New environment**, named `weekly-review`:
+   - **Network access:** Limited (the network-secret hosts are reachable without adding them).
+   - **Environment variables:**
+
+     ```text
+     MACROS_API_URL=https://macrovana.com
+     WORKOUTS_API_URL=https://repmixburn.com
+     SPENDING_API_URL=https://spending-analyzer.jim-greco.com
+     CHECKLIST_API_URL=https://ritualcue.com
+     PLANNER_API_URL=https://weekofus.com
+     REVIEW_SITE_URL=https://review.jim-greco.com
+     AUTH_VIA_PROXY=1
+     NODE_USE_ENV_PROXY=1
+     ```
+   - Save with **Add environment**, then edit it again → **Network secrets** → **Add secret**, six times, type **Bearer**, header `Authorization`, prefix `Bearer`:
+
+     | Allowed website | Value |
+     |---|---|
+     | `macrovana.com` | `macros.token` |
+     | `repmixburn.com` | `workouts.token` |
+     | `spending-analyzer.jim-greco.com` | `spending.token` |
+     | `ritualcue.com` | `checklist.token` |
+     | `weekofus.com` | `planner.token` |
+     | `review.jim-greco.com` | `ingest.token` |
+
+     Copy each value with `pbcopy < ~/.weekly-review-tokens/<name>.token` and paste it; it can't be viewed again after saving.
 2. Create the routine with that environment:
    - repository: `jimgreco/weekly-review`
    - cron: `0 23 * * 0`, i.e. Sunday 23:00 UTC, which is 6 pm EST or 7 pm EDT
    - prompt: "Follow routine/WEEKLY_REVIEW.md in this repository exactly."
    - tools: Bash, Read, Write
-3. Dry run on your Mac, with the same variables in a local `.env` (mode 600). Open the page and check the numbers against each app:
+3. Dry run on your Mac, with the URLs and tokens in a local `.env` (mode 600; no `AUTH_VIA_PROXY`). Open the page and check the numbers against each app:
 
    ```bash
    node --env-file=.env src/cli.js collect --out /tmp/review.json
    node --env-file=.env src/cli.js render --in /tmp/review.json --out /tmp/review.html
    ```
-4. Run the routine for real once, then confirm you received the email.
+4. Run the routine once now, then confirm you received the email and every app shows `ok`.
 
 ## Rotating or revoking
 
-- **One app:** replace its `WEEKLY_SUMMARY_TOKEN_SHA256` and its token in the cloud environment. Clearing the variable turns that app's endpoint off; the review then shows the app as unavailable.
+- **One app:** replace its `~/deploy/weekly-summary-<service>.yml` hash (then recreate that service with its recorded files) and its network secret in the cloud environment. Clearing the variable turns that app's endpoint off; the review then shows the app as unavailable.
 - **Ingest:** replace `INGEST_TOKEN_SHA256` in `weekly-review.env` and recreate the container.
 
 ## Rollback

@@ -44,7 +44,7 @@ Each source fails on its own. A broken, slow or unconfigured app shows a short n
   - `GET /r/<monday>?t=…` and `GET /archive?t=…` serve HMAC-signed private pages.
   - `GET /health`.
 
-The site has no database access and no Claude key. The cloud routine has no database access either: it holds only the five read tokens and the ingest token.
+The site has no database access and no Claude key. The cloud routine has no database access either, and holds no tokens: they are network secrets on its cloud environment, added to requests by the agent proxy outside the session.
 
 ## Run locally
 

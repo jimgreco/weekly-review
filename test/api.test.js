@@ -212,3 +212,13 @@ test('macros: Apple Health sleep survives the Oura strip and shows on the page',
   assert.match(html, /6 nights · target 8\.0 h · \+0\.4 h/);
   assert.doesNotMatch(html, /Sleep score|readiness/i);
 });
+
+test('sources: with AUTH_VIA_PROXY a URL alone is enough and no Authorization is sent', async () => {
+  const config = loadConfig({ AUTH_VIA_PROXY: '1', MACROS_API_URL: 'https://m', WORKOUTS_SUMMARY_TOKEN: 'only-a-token' });
+  const seen = [];
+  const review = await collectWeek(config, WEEK, { fetchImpl: async (url, init) => { seen.push([url, init.headers]); return ok('macros'); } });
+  assert.deepEqual(seen, [['https://m/api/weekly-summary?week=2026-11-02', { Accept: 'application/json' }]]);
+  assert.equal(review.sources.macros.status, 'ok');
+  assert.deepEqual(review.sources.workouts, { status: 'disabled' }, 'a token without a URL is still disabled');
+  assert.equal(loadConfig({}).authViaProxy, false);
+});
