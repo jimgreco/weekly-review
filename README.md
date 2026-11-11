@@ -66,7 +66,7 @@ There are no dependencies to install. Each app's endpoint is tested in its own r
 
 ## Deploy
 
-Every push to `main` tests, then calls the shared `jimgreco/release-tools` server-release workflow (pinned by commit), which publishes `ghcr.io/jimgreco/weekly-review:<sha>` and releases it to the running site with `release.py`, driven by `.github/release/server.json` (only that container; drift-checked, rolled back on a failed health check). See `deploy/RUNBOOK.md`. It covers:
+`.github/workflows/release.yml` (the standard release-tools template) runs `verify.yml` (`npm test`) on pull requests, pushes to `main` and manual runs. Every push to `main` then calls the shared `jimgreco/release-tools` server-release workflow (pinned by commit), which publishes `ghcr.io/jimgreco/weekly-review:<sha>` and releases it to the running site with `release.py`, driven by `.github/release/server.json` (only that container; drift-checked, rolled back on a failed health check). A manual run on `main` can release the server again. See `deploy/RUNBOOK.md`. It covers:
 
 - the site container;
 - the five app tokens;
