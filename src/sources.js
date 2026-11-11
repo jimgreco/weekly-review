@@ -2,6 +2,7 @@
 // Every source fails on its own: a missing, slow or broken app becomes a
 // {status: 'error' | 'disabled'} entry and the rest of the review still goes out.
 import { APPS } from './config.js';
+import { addDays, weekRange } from './week.js';
 
 // Oura's API agreement forbids passing Oura data, or anything derived from it,
 // to an AI model, and the routine hands this review to Claude. Macrovana's
@@ -54,4 +55,21 @@ export async function collectWeek(config, week, { fetchImpl = fetch } = {}) {
     generatedAt: new Date().toISOString(),
     sources: Object.fromEntries(APPS.map((app, i) => [app, results[i]])),
   };
+}
+
+// Earlier weeks for trend context, oldest first, excluding `week` itself. Each
+// entry is that week's summary without its own previous/change comparison.
+// Weeks are fetched one after another (apps in parallel) to stay well inside
+// the apps' rate limits.
+export async function collectHistory(config, week, weeks, { fetchImpl = fetch } = {}) {
+  const starts = Array.from({ length: weeks }, (_, i) => addDays(week.start, -7 * (weeks - i)));
+  const sources = Object.fromEntries(APPS.map((app) => [app, []]));
+  for (const start of starts) {
+    const { sources: got } = await collectWeek(config, weekRange(start), { fetchImpl });
+    for (const app of APPS) {
+      const { previous: _p, change: _c, ms: _ms, ...rest } = got[app];
+      sources[app].push({ week: start, ...rest });
+    }
+  }
+  return { weeks: starts, sources };
 }

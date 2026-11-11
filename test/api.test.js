@@ -99,7 +99,7 @@ test('ingest: validates the submission and drops unknown fields', () => {
   bad({ review: { ...submission().review, week: { start: '2026-11-02', end: '2026-11-09' } } }, /Sunday/);
   bad({ review: { ...submission().review, sources: { ...sources(), planner: undefined } } }, /planner/);
   bad({ review: { ...submission().review, sources: { ...sources(), other: { status: 'ok' } } } }, /unknown/);
-  bad({ narrative: { text: 'x'.repeat(4001) } }, /4000/);
+  bad({ narrative: { text: 'x'.repeat(9001) } }, /9000/);
   bad({ narrative: { text: '   ' } }, /non-empty/);
   bad({ send: 'yes' }, /send/);
   assert.equal(validateSubmission({ ...submission(), narrative: null }).review.narrative, null);
@@ -238,4 +238,26 @@ test('ingest: an explicit resend emails again with its own idempotency key', asy
   assert.match(sent[1].idempotencyKey, /^weekly-review-2026-11-02-resend-/);
   assert.throws(() => validateSubmission(submission({ send: false, resend: true })), /resend requires send/);
   assert.throws(() => validateSubmission(submission({ resend: 'yes' })), /resend must be/);
+});
+
+test('history: collects earlier weeks oldest first, without their own comparisons', async () => {
+  const config = loadConfig({ AUTH_VIA_PROXY: '1', MACROS_API_URL: 'https://m' });
+  const seen = [];
+  const fetchImpl = async (url) => {
+    const start = new URL(url).searchParams.get('week'); seen.push(start);
+    return { ok: true, status: 200, json: async () => ({ version: 1, app: 'macros', week: { start }, data: { status: 'ok', current: { avgCalories: 2000 }, previous: {}, change: {} } }) };
+  };
+  const { collectHistory } = await import('../src/sources.js');
+  const h = await collectHistory(config, WEEK, 3, { fetchImpl });
+  assert.deepEqual(h.weeks, ['2026-10-12', '2026-10-19', '2026-10-26']);
+  assert.deepEqual(seen, h.weeks);
+  assert.deepEqual(h.sources.macros[0], { week: '2026-10-12', status: 'ok', current: { avgCalories: 2000 } });
+  assert.deepEqual(h.sources.planner[2], { week: '2026-10-26', status: 'disabled' });
+});
+
+test('render: narrative supports headings, bullets and bold, and stays escaped', async () => {
+  const { paragraphs } = await import('../src/render.js');
+  const html = paragraphs('## Nutrition\nSolid **2,180** kcal.\n\n- one <b>\n- two\n\nplain & simple');
+  assert.equal(html, '<h3>Nutrition</h3><p>Solid <strong>2,180</strong> kcal.</p><ul><li>one &lt;b&gt;</li><li>two</li></ul><p>plain &amp; simple</p>');
+  assert.match(paragraphs('## A', { h3: 'color:red' }), /<h3 style="color:red">A<\/h3>/);
 });
