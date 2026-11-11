@@ -6,7 +6,7 @@ There are three parts, all done by the owner:
 2. The review site on the shared EC2 host.
 3. The cloud routine.
 
-GitHub changes the server only through the main-branch deploy described in 2c, which replaces this one container. Other server steps run over the existing pinned SSH connection, under the shared `~/deploy/.app-release.lock`, and never print a secret.
+GitHub changes the server only through the main-branch release described in 2c, which replaces this one container. Other server steps run over the existing pinned SSH connection, under the shared `~/deploy/.app-release.lock`, and never print a secret.
 
 ## 0. Generate the tokens on your Mac
 
@@ -102,9 +102,9 @@ docker-compose --profile weekly-review ps weekly-review   # healthy within ~30s
 
 Persist `WEEKLY_REVIEW_IMAGE=...` in `~/deploy/.env`, the way `COMMON_WEEK_IMAGE` is kept.
 
-This first start is the only manual one. After it, every push to `main` deploys itself: CI publishes the image, then `.github/scripts/deploy-app.sh` runs on the host over the pinned SSH connection. It takes the shared release lock, refuses if the configured service no longer hashes like the running one, recreates only `weekly-review` with the new image, health-checks it, and rolls back to the previous image on failure. Before the first start, the deploy step just reports that the service isn't running.
+This first start is the only manual one. After it, every push to `main` deploys itself through the shared [`jimgreco/release-tools`](https://github.com/jimgreco/release-tools) server-release workflow, pinned by commit and configured by `.github/release/server.json`. It publishes the image, then runs `server/release.py` on the host over the pinned SSH connection. It takes the shared release locks, refuses if the configured service no longer hashes like the running one, writes `~/deploy/releases/weekly-review-image-<sha>.json` (which sets only the image), recreates only `weekly-review`, health-checks it, and rolls back to the previous image on failure. Before the first start, the release step just reports that the service isn't running.
 
-It needs a GitHub environment named `production` in `jimgreco/weekly-review` with four secrets, the same values the other apps use: `EC2_HOST`, `EC2_USER`, `EC2_SSH_KEY` and `EC2_SSH_KNOWN_HOSTS`. The image the CI deploy sets lives only on the running container, as with Week of Us; a later manual `up` from `~/deploy/.env` would use whatever that file says.
+It needs a GitHub environment named `production` in `jimgreco/weekly-review` with four secrets, the same values the other apps use: `EC2_HOST`, `EC2_USER`, `EC2_SSH_KEY` and `EC2_SSH_KNOWN_HOSTS`. The released image is pinned by the override file in `~/deploy/releases/`, which the running container records in its Compose labels; a later manual `up` should reuse the running container's recorded `-f` files, or it will fall back to whatever `~/deploy/.env` says.
 
 ### 2d. Public route
 
