@@ -44,8 +44,13 @@ compose() { docker-compose "${compose_args[@]}" "$@"; }
 
 # Drift check: with the live image, the configured service must hash exactly
 # like the running one. Anything else was changed by hand and needs reconciling.
+# Hash the fully resolved model, as `up` does: hashing straight from the files
+# keeps the env_file reference, which `up` has already merged into environment
+# (Compose 2.26.1). The resolved model holds secrets, so it only travels by pipe.
 export WEEKLY_REVIEW_IMAGE="$previous_image"
-reconstructed_hash="$(compose config --hash "$service" | awk -v s="$service" '$1 == s {print $2}')"
+reconstructed_hash="$(compose config --format json 2>/dev/null \
+  | docker-compose -p "$project" --project-directory "$working_directory" --profile "$service" -f - config --hash "$service" 2>/dev/null \
+  | awk -v s="$service" '$1 == s {print $2}')"
 [ -n "$previous_hash" ] && [ "$reconstructed_hash" = "$previous_hash" ] || {
   echo 'Configured weekly-review differs from the running container; reconcile before release.'; exit 1; }
 
