@@ -154,6 +154,8 @@ main{max-width:720px;margin:0 auto;padding:24px 16px 64px}
 header h1{font-size:28px;margin:0 0 4px;letter-spacing:-.01em}header p{margin:0;color:var(--muted)}
 .narrative{font-size:17px;line-height:1.6;background:var(--card);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:12px;padding:18px 20px;margin:20px 0}
 .narrative p{margin:0 0 .8em}.narrative p:last-child{margin:0}
+.narrative h3{font-size:15px;letter-spacing:.02em;text-transform:uppercase;color:var(--accent);margin:1.2em 0 .4em}.narrative h3:first-child{margin-top:0}
+.narrative ul{margin:0 0 .8em;padding-left:1.2em}.narrative li{margin:.25em 0}
 section{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin:16px 0}
 section h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0 0 12px}
 h3{font-size:14px;margin:16px 0 6px}
@@ -178,8 +180,27 @@ h3{font-size:14px;margin:16px 0 6px}
 footer{text-align:center;font-size:13px;color:var(--muted);margin-top:24px}footer a{color:var(--muted)}
 a{color:var(--accent)}`;
 
-export function paragraphs(text) {
-  return String(text).split(/\n\s*\n/).map((p) => `<p>${esc(p.trim())}</p>`).join('');
+// A tiny, safe subset of Markdown for the narrative: blank-line paragraphs,
+// `## ` headings, `- ` bullet lists and **bold**. Everything is escaped first,
+// so the text can never inject markup. `style` adds inline styles for email.
+export function paragraphs(text, style = {}) {
+  const attr = (tag) => (style[tag] ? ` style="${style[tag]}"` : '');
+  const inline = (line) => esc(line).replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  return String(text).split(/\n\s*\n/).map((block) => {
+    const lines = block.trim().split('\n').map((l) => l.trim()).filter(Boolean);
+    if (!lines.length) return '';
+    if (lines.length === 1 && /^#{2,3} /.test(lines[0])) return `<h3${attr('h3')}>${inline(lines[0].replace(/^#{2,3} /, ''))}</h3>`;
+    const out = [];
+    let heading = null;
+    if (/^#{2,3} /.test(lines[0])) heading = lines.shift().replace(/^#{2,3} /, '');
+    if (heading) out.push(`<h3${attr('h3')}>${inline(heading)}</h3>`);
+    if (lines.every((l) => /^[-*] /.test(l))) {
+      out.push(`<ul${attr('ul')}>${lines.map((l) => `<li${attr('li')}>${inline(l.slice(2))}</li>`).join('')}</ul>`);
+    } else {
+      out.push(`<p${attr('p')}>${lines.map(inline).join('<br>')}</p>`);
+    }
+    return out.join('');
+  }).join('');
 }
 
 export function renderPage(review, { archiveHref } = {}) {
@@ -235,7 +256,7 @@ export function renderEmail(review, url) {
   const html = `<!doctype html><html><body style="margin:0;background:#f6f5f1;font:16px/1.55 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#1d1d1b">
 <div style="max-width:560px;margin:0 auto;padding:24px 16px">
 <h1 style="font-size:22px;margin:0 0 16px">Week of ${esc(weekLabel(review.week))}</h1>
-${narrative ? `<div style="background:#fff;border-left:4px solid #2f6f5e;border-radius:8px;padding:14px 16px;margin-bottom:16px">${paragraphs(narrative).replace(/<p>/g, '<p style="margin:0 0 10px">')}</div>` : ''}
+${narrative ? `<div style="background:#fff;border-left:4px solid #2f6f5e;border-radius:8px;padding:14px 16px;margin-bottom:16px">${paragraphs(narrative, { p: 'margin:0 0 10px', h3: 'font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:#2f6f5e;margin:16px 0 6px', ul: 'margin:0 0 10px;padding-left:18px', li: 'margin:3px 0' })}</div>` : ''}
 <ul style="padding-left:18px;margin:0 0 20px">${lines.map((l) => `<li style="margin:4px 0">${esc(l)}</li>`).join('')}</ul>
 <a href="${esc(url)}" style="display:inline-block;background:#2f6f5e;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px">Open the full review</a>
 <p style="font-size:12px;color:#6d6a63;margin-top:24px">This link is private to you. Anyone you forward it to can open this week's review.</p>

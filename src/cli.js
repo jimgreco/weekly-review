@@ -11,8 +11,8 @@
 //   node src/cli.js link [--week 2026-11-02]
 //       On the review site: print the private links for a week and the archive.
 import { readFile, writeFile } from 'node:fs/promises';
-import { loadConfig } from './config.js';
-import { collectWeek } from './sources.js';
+import { APPS, loadConfig } from './config.js';
+import { collectHistory, collectWeek } from './sources.js';
 import { renderPage } from './render.js';
 import { reviewUrl, archiveUrl } from './links.js';
 import { currentWeek, localParts, previousWeek, weekRange } from './week.js';
@@ -44,12 +44,19 @@ async function main() {
 
   if (command === 'collect') {
     const review = await collectWeek(config, week);
+    const weeks = Number(option('--history') ?? 0);
+    if (!Number.isInteger(weeks) || weeks < 0 || weeks > 12) throw new Error('--history must be 0-12 weeks');
+    if (weeks) review.history = await collectHistory(config, week, weeks);
     const json = JSON.stringify(review, null, 2);
     const out = option('--out');
     if (out) await writeFile(out, json, { mode: 0o600 });
     else console.log(json);
     const statuses = Object.entries(review.sources).map(([k, v]) => `${k}=${v.status}${v.error ? ` (${v.error})` : ''}`);
     console.error(`Week ${week.start}: ${statuses.join(', ')}`);
+    if (review.history) {
+      const gaps = APPS.flatMap((app) => review.history.sources[app].filter((w) => w.status !== 'ok').map((w) => `${app}@${w.week}=${w.status}`));
+      console.error(`History: ${review.history.weeks.length} weeks${gaps.length ? `; not ok: ${gaps.join(', ')}` : ', all ok'}`);
+    }
     return;
   }
 
@@ -57,7 +64,7 @@ async function main() {
     if (!config.siteUrl || (!config.ingestToken && !config.authViaProxy)) {
       throw new Error('REVIEW_SITE_URL and REVIEW_INGEST_TOKEN (or AUTH_VIA_PROXY=1) are required');
     }
-    const { review, narrative } = await loadSubmission();
+    const { review: { history: _history, ...review }, narrative } = await loadSubmission(); // history is narrative context only
     const response = await fetch(`${config.siteUrl}/api/reviews`, {
       method: 'POST',
       headers: config.ingestToken

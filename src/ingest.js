@@ -8,7 +8,7 @@ import { reviewUrl } from './links.js';
 import { addDays, weekRange } from './week.js';
 
 export const MAX_BODY_BYTES = 512 * 1024;
-const MAX_NARRATIVE_CHARS = 4000;
+const MAX_NARRATIVE_CHARS = 9000;
 
 export function tokenMatches(expectedSha256, header) {
   if (!expectedSha256 || !/^[0-9a-f]{64}$/.test(expectedSha256)) return false;
