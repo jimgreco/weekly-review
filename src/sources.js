@@ -18,12 +18,13 @@ export function stripOura(macros) {
   return clean;
 }
 
-async function fetchSource(app, { url, token }, week, { timeoutMs, fetchImpl }) {
-  if (!url || !token) return { status: 'disabled' };
+async function fetchSource(app, { url, token }, week, { timeoutMs, fetchImpl, authViaProxy }) {
+  if (!url || (!token && !authViaProxy)) return { status: 'disabled' };
   const started = Date.now();
   try {
     const response = await fetchImpl(`${url}/api/weekly-summary?week=${encodeURIComponent(week.start)}`, {
-      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+      // With authViaProxy and no token, the agent proxy adds Authorization.
+      headers: token ? { Authorization: `Bearer ${token}`, Accept: 'application/json' } : { Accept: 'application/json' },
       redirect: 'error', // never forward the token somewhere else
       signal: AbortSignal.timeout(timeoutMs),
     });
@@ -47,7 +48,7 @@ async function fetchSource(app, { url, token }, week, { timeoutMs, fetchImpl }) 
 
 export async function collectWeek(config, week, { fetchImpl = fetch } = {}) {
   const results = await Promise.all(APPS.map((app) =>
-    fetchSource(app, config.sources[app], week, { timeoutMs: config.fetchTimeoutMs, fetchImpl })));
+    fetchSource(app, config.sources[app], week, { timeoutMs: config.fetchTimeoutMs, fetchImpl, authViaProxy: config.authViaProxy })));
   return {
     week: { start: week.start, end: week.end },
     generatedAt: new Date().toISOString(),

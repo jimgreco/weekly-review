@@ -54,11 +54,15 @@ async function main() {
   }
 
   if (command === 'publish') {
-    if (!config.siteUrl || !config.ingestToken) throw new Error('REVIEW_SITE_URL and REVIEW_INGEST_TOKEN are required');
+    if (!config.siteUrl || (!config.ingestToken && !config.authViaProxy)) {
+      throw new Error('REVIEW_SITE_URL and REVIEW_INGEST_TOKEN (or AUTH_VIA_PROXY=1) are required');
+    }
     const { review, narrative } = await loadSubmission();
     const response = await fetch(`${config.siteUrl}/api/reviews`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${config.ingestToken}`, 'Content-Type': 'application/json' },
+      headers: config.ingestToken
+        ? { Authorization: `Bearer ${config.ingestToken}`, 'Content-Type': 'application/json' }
+        : { 'Content-Type': 'application/json' },
       body: JSON.stringify({ review, narrative, send: flag('--send') }),
       redirect: 'error',
       signal: AbortSignal.timeout(30000),
