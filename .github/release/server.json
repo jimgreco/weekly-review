@@ -1,0 +1,15 @@
+{
+  "app": "weekly-review",
+  "image": "ghcr.io/jimgreco/weekly-review",
+  "images": [
+    { "context": ".", "dockerfile": "Dockerfile" }
+  ],
+  "profile": "weekly-review",
+  "services": {
+    "weekly-review": {
+      "health": ["node", "-e", "fetch('http://127.0.0.1:8790/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+    }
+  },
+  "interpolate_from_live": { "WEEKLY_REVIEW_IMAGE": "image:weekly-review" },
+  "allow_not_running": true
+}
