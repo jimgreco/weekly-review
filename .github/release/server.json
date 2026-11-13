@@ -11,5 +11,5 @@
     }
   },
   "interpolate_from_live": { "WEEKLY_REVIEW_IMAGE": "image:weekly-review" },
-  "allow_not_running": true
+  "refuse_backwards": true
 }
