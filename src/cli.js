@@ -12,7 +12,7 @@
 //       On the review site: print the private links for a week and the archive.
 import { readFile, writeFile } from 'node:fs/promises';
 import { APPS, loadConfig } from './config.js';
-import { collectHistory, collectWeek } from './sources.js';
+import { collectHistory, collectWeek, journalCountsOnly } from './sources.js';
 import { renderPage } from './render.js';
 import { reviewUrl, archiveUrl } from './links.js';
 import { currentWeek, localParts, previousWeek, weekRange } from './week.js';
@@ -65,6 +65,8 @@ async function main() {
       throw new Error('REVIEW_SITE_URL and REVIEW_INGEST_TOKEN (or AUTH_VIA_PROXY=1) are required');
     }
     const { review: { history: _history, ...review }, narrative } = await loadSubmission(); // history is narrative context only
+    // Journal text is narrative context only: the site gets the counts.
+    if (review.sources?.journal) review.sources = { ...review.sources, journal: journalCountsOnly(review.sources.journal) };
     const response = await fetch(`${config.siteUrl}/api/reviews`, {
       method: 'POST',
       headers: config.ingestToken

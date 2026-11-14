@@ -6,6 +6,7 @@ import { renderEmail } from './render.js';
 import { sendEmail } from './email.js';
 import { reviewUrl } from './links.js';
 import { addDays, weekRange } from './week.js';
+import { journalCountsOnly } from './sources.js';
 
 export const MAX_BODY_BYTES = 512 * 1024;
 const MAX_NARRATIVE_CHARS = 9000;
@@ -57,7 +58,8 @@ export function validateSubmission(body) {
     review: {
       week: { start: week.start, end: week.end },
       generatedAt: new Date(review.generatedAt).toISOString(),
-      sources: Object.fromEntries(APPS.map((app) => [app, sources[app]])),
+      // Never store journal text, even if a client sends it.
+      sources: Object.fromEntries(APPS.map((app) => [app, app === 'journal' ? journalCountsOnly(sources[app]) : sources[app]])),
       narrative: cleanNarrative,
     },
     send,
