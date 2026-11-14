@@ -34,7 +34,7 @@ import { readFile, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { APPS, loadConfig } from './config.js';
-import { collectCommitments, collectDecisions, collectHistory, collectNotes, collectWeek } from './sources.js';
+import { collectCommitments, collectDecisions, collectHistory, collectNotes, collectWeek, journalCountsOnly } from './sources.js';
 import { POST_KINDS, validPostKey } from './posts.js';
 import { validateDecisions } from './decisions.js';
 import { validateCommitments } from './commitments.js';
@@ -333,6 +333,8 @@ async function main() {
     // history, notes and the commitments read back from the site are narrative
     // context only; they never reach the stored review.
     const { review: { history: _history, notes: _notes, commitments: _due, decisions: _decisions, asOf: _asOf, month: _month, ...review }, narrative, commitments } = await loadSubmission();
+    // Journal text is narrative context only: the site gets the counts.
+    if (review.sources?.journal) review.sources = { ...review.sources, journal: journalCountsOnly(review.sources.journal) };
     const response = await fetch(`${config.siteUrl}/api/reviews`, {
       method: 'POST',
       headers: config.ingestToken

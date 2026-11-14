@@ -9,13 +9,13 @@ Every Sunday evening, a Claude Code cloud routine does three things:
 ```
  cloud routine (Sunday 23:00 UTC)                         review site (EC2)
  ┌──────────────────────────────────┐   POST /api/reviews  ┌───────────────────────┐
- │ cli.js collect ──► 5 × GET        │ ───────────────────► │ store JSON, email link│
+ │ cli.js collect ──► 6 × GET        │ ───────────────────► │ store JSON, email link│
  │ Claude writes the narrative       │   (ingest token)     │ serve /r/<week>?t=…   │
  │ cli.js publish                    │                      └───────────────────────┘
  └──────────────────────────────────┘
           │ GET /api/weekly-summary?week=<monday>  (one read-only token per app)
           ▼
- Macrovana · Rep, Mix, Burn · Spending · Ritual Cue · Week of Us
+ Macrovana · Rep, Mix, Burn · Spending · Ritual Cue · Week of Us · Journal
 
  owner's Mac (Sunday ~17:30, Claude Desktop task)
    digest of the week's Claude Code transcripts ──► Claude writes a short summary
@@ -34,6 +34,7 @@ The Mac step adds a `## Beyond the apps` section: what the owner built in Claude
 | Spending | weekly total (same exclusion rule as `/api/stats`), top categories against the 8-week average, largest charges |
 | Ritual Cue | check-offs, misses, and habits that dropped off since last week |
 | Week of Us | tasks done, stuck (carried over at least twice) and overdue; next week's tasks and priorities, meals and logistics |
+| Journal | counts, mood and tags, plus the text of the week's non-private entries. The text is for the narrative only: the site stores and shows counts, and the 8-week history carries counts only. |
 
 `docs/weekly-summary-contract.md` defines the endpoint each app exposes. Each app checks its own token (stored as a SHA-256 hash, bound to one user's email), returns 404 for anything else, and only reads.
 
@@ -87,7 +88,7 @@ Every form post needs the session cookie (`SameSite=Lax`) plus a token derived f
 
 ## Pieces
 
-- `src/sources.js` calls the five endpoints. It never follows redirects with a token.
+- `src/sources.js` calls the six endpoints. It never follows redirects with a token.
 - `src/cli.js` has these commands:
   - `collect` writes the review JSON;
   - `publish` posts it with the narrative (`--send` emails once per week; `--resend` deliberately emails again; `--commitments` adds the scores and next week's proposals);

@@ -5,7 +5,7 @@
 // - the weekly routine (src/cli.js collect/publish) needs the app URLs and tokens, plus the site URL and ingest token;
 // - the owner's Mac (src/cli.js post-notes) needs the site URL and the notes token (NOTES_TOKEN or a token file).
 
-export const APPS = ['macros', 'workouts', 'spending', 'checklist', 'planner'];
+export const APPS = ['macros', 'workouts', 'spending', 'checklist', 'planner', 'journal'];
 
 export function loadConfig(env = process.env) {
   const sources = Object.fromEntries(APPS.map((app) => {
