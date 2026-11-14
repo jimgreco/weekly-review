@@ -4,7 +4,7 @@
 // - the review site (src/server.js) needs the link secret, ingest token hash and Resend settings;
 // - the weekly routine (src/cli.js collect/publish) needs the app URLs and tokens, plus the site URL and ingest token.
 
-export const APPS = ['macros', 'workouts', 'spending', 'checklist', 'planner'];
+export const APPS = ['macros', 'workouts', 'spending', 'checklist', 'planner', 'journal'];
 
 export function loadConfig(env = process.env) {
   const sources = Object.fromEntries(APPS.map((app) => {

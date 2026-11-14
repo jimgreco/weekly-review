@@ -19,6 +19,15 @@ export function stripOura(macros) {
   return clean;
 }
 
+// Journal entry text is for the narrative only. It never leaves the routine
+// session: the review site stores and shows only the journal's counts, and the
+// 8-week history keeps counts too (the week under review carries the text).
+export function journalCountsOnly(journal) {
+  if (!journal || typeof journal !== 'object') return journal;
+  const { entries: _entries, truncated: _truncated, ...counts } = journal;
+  return counts;
+}
+
 async function fetchSource(app, { url, token }, week, { timeoutMs, fetchImpl, authViaProxy }) {
   if (!url || (!token && !authViaProxy)) return { status: 'disabled' };
   const started = Date.now();
@@ -67,7 +76,7 @@ export async function collectHistory(config, week, weeks, { fetchImpl = fetch } 
   for (const start of starts) {
     const { sources: got } = await collectWeek(config, weekRange(start), { fetchImpl });
     for (const app of APPS) {
-      const { previous: _p, change: _c, ms: _ms, ...rest } = got[app];
+      const { previous: _p, change: _c, ms: _ms, ...rest } = app === 'journal' ? journalCountsOnly(got[app]) : got[app];
       sources[app].push({ week: start, ...rest });
     }
   }

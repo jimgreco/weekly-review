@@ -125,6 +125,21 @@ function habits(s) {
     ${s.mostMissed.length ? `<h3>Missed most</h3><p>${s.mostMissed.map((r) => `${esc(r.title)} (${r.missed})`).join(', ')}</p>` : ''}`;
 }
 
+function journal(s) {
+  if (s?.status !== 'ok') return unavailable('Journal', s);
+  const c = s.current;
+  const tags = (c.topTags ?? []).map((t) => `${esc(t.tag)} (${t.count})`).join(', ');
+  return `
+    <div class="stats">
+      ${stat('Entries', c.entries, `${s.previous?.entries ?? 0} last week`)}
+      ${stat('Days written', `${c.daysWithEntries}/7`)}
+      ${stat('Spoken', c.voiceEntries)}
+      ${c.avgMood != null ? stat('Average mood', `${c.avgMood}/5`) : ''}
+    </div>
+    ${tags ? `<h3>Themes you tagged</h3><p>${tags}</p>` : ''}
+    <p class="muted">Entry text stays in Journal. ${c.privateEntries ? `${c.privateEntries} private ${c.privateEntries === 1 ? 'entry was' : 'entries were'} left out of this review.` : ''}</p>`;
+}
+
 function taskLine(t) {
   const bits = [t.responsible, t.deadline && `due ${dayName(t.deadline)} ${t.deadline.slice(5)}`, t.carryovers >= 2 && `carried ${t.carryovers}×`].filter(Boolean);
   return `<li>${esc(t.text)}${bits.length ? ` <span class="muted">· ${bits.map(esc).join(' · ')}</span>` : ''}</li>`;
@@ -215,6 +230,7 @@ ${review.narrative ? `<div class="narrative">${paragraphs(review.narrative.text)
 <section><h2>Spending</h2>${section('Spending', spending, s.spending, review.week)}</section>
 <section><h2>Habits</h2>${section('Ritual Cue', habits, s.checklist)}</section>
 <section><h2>Household</h2>${section('Week of Us', planner, s.planner)}</section>
+${s.journal ? `<section><h2>Journal</h2>${section('Journal', journal, s.journal)}</section>` : ''}
 <footer>Generated ${esc(new Date(review.generatedAt).toLocaleString('en-US', { timeZone: 'America/New_York', dateStyle: 'medium', timeStyle: 'short' }))}${archiveHref ? ` · <a href="${esc(archiveHref)}">Past weeks</a>` : ''}</footer>
 </main></body></html>`;
 }
@@ -237,6 +253,7 @@ export function headlines(review) {
     spending: (x) => `Spending: ${money(x.current.total)} (usual week ${money(x.weeklyBaseline)})`,
     checklist: (c) => `Habits: ${c.doneCount} check-offs (${c.doneCountPrev} last week)`,
     planner: (p) => `Household: ${p.current.doneCount} of ${p.current.taskCount} tasks done${p.overdue.length ? `, ${p.overdue.length} overdue` : ''}`,
+    journal: (j) => `Journal: ${j.current.entries} ${j.current.entries === 1 ? 'entry' : 'entries'} on ${j.current.daysWithEntries} days`,
   };
   const out = [];
   for (const [key, line] of Object.entries(lines)) {

@@ -1,6 +1,6 @@
 # Weekly summary endpoint contract
 
-Each app (Macrovana, Rep Mix Burn, Spending, Ritual Cue, Week of Us) exposes one read-only endpoint. The weekly-review routine calls all five every Sunday evening, then writes the analysis.
+Each app (Macrovana, Rep Mix Burn, Spending, Ritual Cue, Week of Us, Journal) exposes one read-only endpoint. The weekly-review routine calls all six every Sunday evening, then writes the analysis.
 
 ## Request
 
@@ -43,7 +43,7 @@ Where the app has a read path (`store.read()`, a plain `SELECT`), use it.
 200 Content-Type: application/json, Cache-Control: no-store
 {
   "version": 1,
-  "app": "macros" | "workouts" | "spending" | "checklist" | "planner",
+  "app": "macros" | "workouts" | "spending" | "checklist" | "planner" | "journal",
   "week": {"start": "2026-11-02", "end": "2026-11-08"},
   "generatedAt": "<ISO-8601>",
   "data": { ... }
@@ -59,6 +59,7 @@ Where the app has a read path (`store.read()`, a plain `SELECT`), use it.
 | spending | `src/sources/spending.js` → `collectSpending` |
 | checklist | `src/sources/checklist.js` → `collectChecklist` |
 | planner | `src/sources/planner.js` → `collectPlanner` |
+| journal | `jimgreco/journal` README, "Weekly summary" (new; no earlier direct-database version) |
 
 - **Macrovana:** `sleepScore`, `readinessScore`, `avgSteps` and `change.sleepScore` are always `null`, and `oura_documents` is never read. Oura's API agreement forbids passing Oura data, or values derived from it, to any AI/ML model, and the routine hands this payload to Claude. See macros `AGENTS.md`.
 - **Macrovana sleep (additive, 2026-11):** `current/previous.sleepNights` (nights with logged sleep) and `avgSleepHours` (mean hours on those nights, 1 dp), plus `change.avgSleepHours`. They come only from live `sleep_entries` with source `healthkit` or `manual` and no Oura document link: Apple Health and manual sleep, which Macrovana already treats as AI-eligible. When direct Oura is connected, Macrovana drops Oura-app sleep that arrives through Apple Health, so these reflect other sources (Apple Watch, manual) unless Oura is disconnected.

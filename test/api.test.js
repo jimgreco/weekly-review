@@ -24,7 +24,7 @@ const ok = (app, data = { status: 'ok' }) => ({
 
 const sources = () => ({
   macros: { status: 'ok' }, workouts: { status: 'ok' }, spending: { status: 'disabled' },
-  checklist: { status: 'error', error: 'HTTP 500' }, planner: { status: 'no-account' },
+  checklist: { status: 'error', error: 'HTTP 500' }, planner: { status: 'no-account' }, journal: { status: 'disabled' },
 });
 const submission = (overrides = {}) => ({
   review: { week: { start: WEEK.start, end: WEEK.end }, generatedAt: '2026-11-08T23:00:00Z', sources: sources() },
@@ -260,4 +260,48 @@ test('render: narrative supports headings, bullets and bold, and stays escaped',
   const html = paragraphs('## Nutrition\nSolid **2,180** kcal.\n\n- one <b>\n- two\n\nplain & simple');
   assert.equal(html, '<h3>Nutrition</h3><p>Solid <strong>2,180</strong> kcal.</p><ul><li>one &lt;b&gt;</li><li>two</li></ul><p>plain &amp; simple</p>');
   assert.match(paragraphs('## A', { h3: 'color:red' }), /<h3 style="color:red">A<\/h3>/);
+});
+
+const journalData = () => ({
+  status: 'ok',
+  current: { entries: 3, privateEntries: 1, voiceEntries: 2, daysWithEntries: 2, sharedWords: 40, avgMood: 3.5,
+    topTags: [{ tag: 'work', count: 2 }] },
+  previous: { entries: 1, privateEntries: 0, voiceEntries: 0, daysWithEntries: 1, sharedWords: 10 },
+  entries: [{ date: WEEK.start, weekday: 'Mon', source: 'voice', mood: 3, tags: ['work'], words: 6, text: 'SECRET-ish journal words here', truncated: false }],
+  truncated: false,
+});
+
+test('journal: entry text reaches the routine but never the site or the history', async () => {
+  const { journalCountsOnly, collectHistory } = await import('../src/sources.js');
+  const config = loadConfig({ AUTH_VIA_PROXY: '1', JOURNAL_API_URL: 'https://j' });
+  const fetchImpl = async (url) => {
+    const start = new URL(url).searchParams.get('week');
+    return { ok: true, status: 200, json: async () => ({ version: 1, app: 'journal', week: { start }, data: journalData() }) };
+  };
+  const review = await collectWeek(config, WEEK, { fetchImpl });
+  assert.equal(review.sources.journal.entries[0].text, 'SECRET-ish journal words here', 'the narrative sees this week\'s text');
+
+  const history = await collectHistory(config, WEEK, 2, { fetchImpl });
+  assert.ok(!JSON.stringify(history).includes('SECRET'), 'history keeps counts only');
+  assert.equal(history.sources.journal[0].current.entries, 3);
+
+  assert.deepEqual(Object.keys(journalCountsOnly(journalData())).sort(), ['current', 'previous', 'status']);
+
+  const clean = validateSubmission(submission({ review: { ...submission().review, sources: { ...sources(), journal: journalData() } } }));
+  assert.ok(!JSON.stringify(clean).includes('SECRET'), 'the site never stores journal text');
+  assert.equal(clean.review.sources.journal.current.privateEntries, 1);
+});
+
+test('journal: the page shows counts and themes, not entries', async () => {
+  const { renderPage, renderEmail } = await import('../src/render.js');
+  const review = { ...submission().review, sources: { ...sources(), journal: journalData() }, narrative: null };
+  const html = renderPage(review);
+  assert.match(html, /<h2>Journal<\/h2>/);
+  assert.match(html, /1 private entry was left out/);
+  assert.match(html, /work \(2\)/);
+  assert.ok(!html.includes('SECRET'));
+  assert.ok(renderEmail(review, 'https://x').text.includes('Journal: 3 entries on 2 days'));
+  // Reviews stored before the journal existed still render.
+  const { journal: _j, ...old } = sources();
+  assert.ok(!renderPage({ ...review, sources: old }).includes('<h2>Journal</h2>'));
 });
