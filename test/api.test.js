@@ -261,3 +261,20 @@ test('render: narrative supports headings, bullets and bold, and stays escaped',
   assert.equal(html, '<h3>Nutrition</h3><p>Solid <strong>2,180</strong> kcal.</p><ul><li>one &lt;b&gt;</li><li>two</li></ul><p>plain &amp; simple</p>');
   assert.match(paragraphs('## A', { h3: 'color:red' }), /<h3 style="color:red">A<\/h3>/);
 });
+
+test('macros: Apple Health activity and heart metrics survive the Oura strip and show on the page', async () => {
+  const { renderPage } = await import('../src/render.js');
+  const day = (date) => ({ date, state: 'complete', calories: 2000, protein: 140, carbs: 200, fat: 70, fiber: 30 });
+  const health = { daysWithData: 7, avgSteps: 9123, avgActiveEnergyKcal: 610, avgExerciseMinutes: 42, avgRestingHeartRate: 54.2, avgHrvMs: 61.5, latestVo2Max: 44.1 };
+  const current = { days: WEEK.days.map(day), loggedDays: 7, completeDays: 7, avgCalories: 2000, avgProtein: 140, avgFiber: 30,
+    weight: { count: 0, avg: null }, waistIn: null, health, sleepScore: 80, readinessScore: 70, avgSteps: 9999 };
+  const macros = stripOura({ status: 'ok', targets: {}, current, previous: { ...current }, change: { health: { avgSteps: 512, avgRestingHeartRate: -1.3, avgHrvMs: 2 } } });
+  assert.deepEqual(macros.current.health, health, 'nested Apple Health metrics are kept');
+  assert.equal(macros.current.avgSteps, null, 'the Oura steps slot is still emptied');
+  const html = renderPage({ week: WEEK, generatedAt: '2026-11-08T23:00:00Z', narrative: null, sources: { ...sources(), macros } });
+  assert.match(html, /Steps \/ day/);
+  assert.match(html, /9,123/);
+  assert.match(html, /Resting HR/);
+  assert.match(html, /54\.2 bpm/);
+  assert.match(html, /HRV/);
+});
