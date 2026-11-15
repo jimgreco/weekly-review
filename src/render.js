@@ -67,6 +67,8 @@ function nutrition(s) {
       ${c.weight.avg != null ? stat('Weight', `${fmt(c.weight.avg, 1)}`, `${c.weight.count} weigh-ins · ${esc(signed(s.change.weight, 1))}`) : ''}
       ${c.waistIn ? stat('Waist', `${fmt(c.waistIn.latest, 2)} in`, esc(c.waistIn.day)) : ''}
       ${c.health?.avgSteps != null ? stat('Steps / day', fmt(c.health.avgSteps), `${c.health.daysWithData} days${s.change?.health?.avgSteps != null ? ` · ${esc(signed(s.change.health.avgSteps))} vs last wk` : ''}`) : ''}
+      ${c.health?.avgDistanceMiles != null ? stat('Distance / day', `${fmt(c.health.avgDistanceMiles, 1)} mi`, s.change?.health?.avgDistanceMiles != null ? `${esc(signed(s.change.health.avgDistanceMiles, 1, ' mi'))} vs last wk` : '') : ''}
+      ${c.health?.avgHeartRateBpm != null ? stat('Heart rate', `${fmt(c.health.avgHeartRateBpm)} bpm`, c.health.avgLowestHeartRateBpm != null ? `lowest ${fmt(c.health.avgLowestHeartRateBpm)} bpm` : '') : ''}
       ${c.health?.avgRestingHeartRate != null ? stat('Resting HR', `${fmt(c.health.avgRestingHeartRate, 1)} bpm`, s.change?.health?.avgRestingHeartRate != null ? esc(signed(s.change.health.avgRestingHeartRate, 1, ' bpm')) : '') : ''}
       ${c.health?.avgHrvMs != null ? stat('HRV', `${fmt(c.health.avgHrvMs, 1)} ms`, s.change?.health?.avgHrvMs != null ? esc(signed(s.change.health.avgHrvMs, 1, ' ms')) : '') : ''}
       ${c.avgSleepHours != null ? stat('Sleep / night', `${fmt(c.avgSleepHours, 1)} h`, `${c.sleepNights} nights${t.sleepHours ? ` · target ${fmt(t.sleepHours, 1)} h` : ''}${s.change?.avgSleepHours != null ? ` · ${esc(signed(s.change.avgSleepHours, 1, ' h'))}` : ''}`) : ''}

@@ -278,3 +278,19 @@ test('macros: Apple Health activity and heart metrics survive the Oura strip and
   assert.match(html, /54\.2 bpm/);
   assert.match(html, /HRV/);
 });
+
+test('macros: added Apple Health metrics (distance, heart rate) render when present', async () => {
+  const { renderPage } = await import('../src/render.js');
+  const day = (date) => ({ date, state: 'complete', calories: 2000, protein: 140, carbs: 200, fat: 70, fiber: 30 });
+  const health = { daysWithData: 7, avgSteps: 11179, avgDistanceMiles: 5.2, avgHeartRateBpm: 68, avgLowestHeartRateBpm: 51,
+    avgRestingHeartRate: null, avgHrvMs: null };
+  const current = { days: WEEK.days.map(day), loggedDays: 7, completeDays: 7, avgCalories: 2000, avgProtein: 140, avgFiber: 30,
+    weight: { count: 0, avg: null }, waistIn: null, health };
+  const macros = stripOura({ status: 'ok', targets: {}, current, previous: { ...current }, change: { health: { avgDistanceMiles: 0.4 } } });
+  const html = renderPage({ week: WEEK, generatedAt: '2026-11-08T23:00:00Z', narrative: null, sources: { ...sources(), macros } });
+  assert.match(html, /Distance \/ day/);
+  assert.match(html, /5\.2 mi/);
+  assert.match(html, /\+0\.4 mi vs last wk/);
+  assert.match(html, /lowest 51 bpm/);
+  assert.doesNotMatch(html, /Resting HR|HRV/, 'metrics with no data are not shown');
+});
