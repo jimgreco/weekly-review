@@ -127,3 +127,28 @@ export async function collectCommitments(config, week, { fetchImpl = fetch } = {
     return { commitments: null, status: 'error', error: reason };
   }
 }
+
+// The owner's open decisions dated within the next `days` days (GET
+// /api/decisions, ingest token or the proxy; src/decisions.js). Optional
+// context, like notes: a failure gives decisions = null and a reason.
+export async function collectDecisions(config, today, days, { fetchImpl = fetch } = {}) {
+  if (!config.siteUrl || (!config.ingestToken && !config.authViaProxy)) return { decisions: null, status: 'disabled' };
+  try {
+    const response = await fetchImpl(`${config.siteUrl}/api/decisions`, {
+      headers: config.ingestToken ? { Authorization: `Bearer ${config.ingestToken}`, Accept: 'application/json' } : { Accept: 'application/json' },
+      redirect: 'error',
+      signal: AbortSignal.timeout(config.fetchTimeoutMs ?? 20000),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const body = await response.json();
+    if (!Array.isArray(body?.decisions)) throw new Error('unexpected response shape');
+    const until = addDays(today, days);
+    const upcoming = body.decisions
+      .filter((d) => d && d.status === 'open' && typeof d.date === 'string' && d.date >= today && d.date <= until)
+      .map(({ id, date, title, question, options, context, briefed }) => ({ id, date, title, question, options: options ?? [], context: context ?? null, briefed: Boolean(briefed) }));
+    return { decisions: { upcoming }, status: upcoming.length ? 'ok' : 'none', summary: upcoming.length ? `${upcoming.length} in the next ${days} days` : null };
+  } catch (error) {
+    const reason = error.name === 'TimeoutError' ? 'timed out' : error.message;
+    return { decisions: null, status: 'error', error: reason };
+  }
+}

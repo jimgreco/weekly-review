@@ -1,8 +1,15 @@
 // Commands. The weekly routine runs collect, writes the narrative, then publish.
 //
-//   node src/cli.js collect [--week 2026-11-02] [--out review.json]
+//   node src/cli.js collect [--week 2026-11-02 | --current | --month [2026-11]] [--history N] [--out review.json]
 //       Call every app's weekly-summary endpoint and write the review JSON.
 //       Default week: the current one on Sunday, otherwise the last finished week.
+//       --current is the week in progress (the midweek routine). --month is the
+//       last week of that month (default: last month) with enough history to
+//       cover it and the month before, listed under `month`.
+//   node src/cli.js post --kind pulse|decision|monthly --key <Monday|decision id|YYYY-MM> --text post.md [--model id] [--send]
+//       Post a midweek pulse, decision brief or monthly roll-up to the site (src/posts.js).
+//   node src/cli.js decisions pull [--out decisions.json] | push --file decisions.json
+//       On the owner's Mac: read or replace the decision register on the site (notes token).
 //   node src/cli.js publish --in review.json [--narrative narrative.md] [--commitments commitments.json] [--model id] [--send]
 //       Post the review (and narrative) to the review site. --send emails the
 //       link, at most once per week. --commitments scores this week's accepted
@@ -18,12 +25,14 @@ import { readFile, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { APPS, loadConfig } from './config.js';
-import { collectCommitments, collectHistory, collectNotes, collectWeek } from './sources.js';
+import { collectCommitments, collectDecisions, collectHistory, collectNotes, collectWeek } from './sources.js';
+import { POST_KINDS, validPostKey } from './posts.js';
+import { validateDecisions } from './decisions.js';
 import { validateCommitments } from './commitments.js';
 import { MAX_NOTE_CHARS } from './notes.js';
 import { renderPage } from './render.js';
 import { reviewUrl, archiveUrl } from './links.js';
-import { currentWeek, localParts, previousWeek, weekRange } from './week.js';
+import { currentWeek, localDate, localParts, monthWeeks, previousMonth, previousWeek, weekRange } from './week.js';
 
 const [command, ...args] = process.argv.slice(2);
 const flag = (name) => args.includes(name);
@@ -100,17 +109,93 @@ async function main() {
     return;
   }
 
-  const week = option('--week') ? weekRange(option('--week')) : defaultWeek(new Date(), config.timezone);
+  if (command === 'decisions') {
+    const action = args[0];
+    if (!config.siteUrl) throw new Error('REVIEW_SITE_URL is required');
+    checkSiteUrl(config.siteUrl);
+    const token = await readNotesToken(config.notesToken, option('--token-file') ?? DEFAULT_NOTES_TOKEN_FILE);
+    const request = async (init = {}) => {
+      const response = await fetch(`${config.siteUrl}/api/decisions`, {
+        ...init, headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', ...(init.body ? { 'Content-Type': 'application/json' } : {}) },
+        redirect: 'error', signal: AbortSignal.timeout(30000),
+      });
+      const body = await response.text();
+      if (response.status === 404) throw new Error('Review site returned 404 (notes token off, or token mismatch)');
+      if (!response.ok) throw new Error(`Review site returned ${response.status}: ${body.slice(0, 300)}`);
+      return JSON.parse(body);
+    };
+    if (action === 'pull') {
+      const { decisions } = await request();
+      const json = JSON.stringify({ decisions: decisions.map(({ briefed: _briefed, ...d }) => d) }, null, 2);
+      const out = option('--out');
+      if (out) await writeFile(out, json, { mode: 0o600 });
+      else console.log(json);
+      console.error(`${decisions.length} decisions (${decisions.filter((d) => d.status === 'open').length} open, ${decisions.filter((d) => d.briefed).length} briefed)`);
+      return;
+    }
+    if (action === 'push') {
+      const file = option('--file');
+      if (!file) throw new Error('--file <decisions.json> is required');
+      const decisions = validateDecisions(JSON.parse(await readFile(file, 'utf8')));
+      console.log(`Stored ${(await request({ method: 'PUT', body: JSON.stringify({ decisions }) })).stored} decisions`);
+      return;
+    }
+    throw new Error('Usage: node src/cli.js decisions <pull [--out file] | push --file file>');
+  }
+
+  if (command === 'post') {
+    const kind = option('--kind');
+    const key = option('--key');
+    if (!Object.hasOwn(POST_KINDS, kind ?? '')) throw new Error(`--kind must be one of ${Object.keys(POST_KINDS).join(', ')}`);
+    if (!validPostKey(kind, key)) throw new Error('--key must be a Monday for a pulse, a decision id for a decision, or YYYY-MM for a monthly');
+    if (!option('--text')) throw new Error('--text <post.md> is required');
+    if (!config.siteUrl || (!config.ingestToken && !config.authViaProxy)) throw new Error('REVIEW_SITE_URL and REVIEW_INGEST_TOKEN (or AUTH_VIA_PROXY=1) are required');
+    const text = (await readFile(option('--text'), 'utf8')).trim();
+    if (!text) throw new Error(`${option('--text')} is empty`);
+    if (text.length > POST_KINDS[kind].maxChars) throw new Error(`${option('--text')} is over ${POST_KINDS[kind].maxChars} characters`);
+    const response = await fetch(`${config.siteUrl}/api/posts`, {
+      method: 'POST',
+      headers: config.ingestToken
+        ? { Authorization: `Bearer ${config.ingestToken}`, 'Content-Type': 'application/json' }
+        : { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind, key, text, model: option('--model') ?? null, generatedAt: new Date().toISOString(), send: flag('--send') || flag('--resend'), resend: flag('--resend') }),
+      redirect: 'error',
+      signal: AbortSignal.timeout(30000),
+    });
+    const body = await response.text();
+    if (!response.ok) throw new Error(`Review site returned ${response.status}: ${body.slice(0, 300)}`);
+    const result = JSON.parse(body);
+    console.log(`Posted ${result.kind} ${result.key}; ${result.sent ? 'emailed now' : result.sentAt ? `already emailed at ${result.sentAt}` : 'not emailed'}`);
+    return;
+  }
+
+  const today = localDate(new Date(), config.timezone);
+  let month = null;
+  let week;
+  if (flag('--month')) {
+    const given = option('--month');
+    const key = given && !given.startsWith('--') ? given : previousMonth(today.slice(0, 7));
+    const previous = monthWeeks(previousMonth(key));
+    month = { ...monthWeeks(key), previous: { key: previous.key, label: previous.label, weeks: previous.weeks } };
+    week = weekRange(month.weeks.at(-1));
+    if (week.end >= today) throw new Error(`${month.label} is not over yet`);
+  } else if (flag('--current')) week = currentWeek(new Date(), config.timezone);
+  else week = option('--week') ? weekRange(option('--week')) : defaultWeek(new Date(), config.timezone);
 
   if (command === 'collect') {
     const review = await collectWeek(config, week);
-    const weeks = Number(option('--history') ?? 0);
+    // A month needs its own weeks and the month before: 8 or 9 earlier weeks.
+    const weeks = month ? month.weeks.length + month.previous.weeks.length - 1 : Number(option('--history') ?? 0);
     if (!Number.isInteger(weeks) || weeks < 0 || weeks > 12) throw new Error('--history must be 0-12 weeks');
+    review.asOf = { date: today, weekday: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][localParts(new Date(), config.timezone).weekday] };
+    if (month) review.month = month;
     if (weeks) review.history = await collectHistory(config, week, weeks);
     const notes = await collectNotes(config, week);
     review.notes = notes.notes;
     const commitments = await collectCommitments(config, week);
     review.commitments = commitments.commitments;
+    const decisions = await collectDecisions(config, today, 14);
+    review.decisions = decisions.decisions;
     const json = JSON.stringify(review, null, 2);
     const out = option('--out');
     if (out) await writeFile(out, json, { mode: 0o600 });
@@ -122,6 +207,7 @@ async function main() {
       console.error(`History: ${review.history.weeks.length} weeks${gaps.length ? `; not ok: ${gaps.join(', ')}` : ', all ok'}`);
     }
     console.error(`Notes: notes=${notes.status}${notes.error ? ` (${notes.error})` : ''}`);
+    console.error(`Decisions: decisions=${decisions.status}${decisions.error ? ` (${decisions.error})` : ''}${decisions.summary ? ` (${decisions.summary})` : ''}`);
     console.error(`Commitments: commitments=${commitments.status}${commitments.error ? ` (${commitments.error})` : ''}${commitments.summary ? ` (${commitments.summary})` : ''}`);
     return;
   }
@@ -132,7 +218,7 @@ async function main() {
     }
     // history, notes and the commitments read back from the site are narrative
     // context only; they never reach the stored review.
-    const { review: { history: _history, notes: _notes, commitments: _due, ...review }, narrative, commitments } = await loadSubmission();
+    const { review: { history: _history, notes: _notes, commitments: _due, decisions: _decisions, asOf: _asOf, month: _month, ...review }, narrative, commitments } = await loadSubmission();
     const response = await fetch(`${config.siteUrl}/api/reviews`, {
       method: 'POST',
       headers: config.ingestToken
@@ -154,7 +240,7 @@ async function main() {
   }
 
   if (command === 'render') {
-    const { review: { notes: _notes, commitments: read, ...review }, narrative, commitments } = await loadSubmission();
+    const { review: { notes: _notes, decisions: _decisions, commitments: read, ...review }, narrative, commitments } = await loadSubmission();
     const out = option('--out');
     if (!out) throw new Error('--out <page.html> is required');
     // Preview: last week's commitments with the outcomes from the file, and the
@@ -174,7 +260,7 @@ async function main() {
     return;
   }
 
-  console.error('Usage: node src/cli.js <collect|publish|render|link|post-notes> [options]; see the top of src/cli.js');
+  console.error('Usage: node src/cli.js <collect|publish|render|link|post|decisions|post-notes> [options]; see the top of src/cli.js');
   process.exitCode = 2;
 }
 

@@ -46,3 +46,22 @@ export function previousWeek(week) {
 export function nextWeek(week) {
   return weekRange(addDays(week.start, 7));
 }
+
+/**
+ * A calendar month as whole weeks: the Monday-Sunday weeks that END in it, so
+ * every one is finished once the month is. Returns {key, label, weeks} with
+ * `weeks` as Mondays, oldest first.
+ */
+export function monthWeeks(key) {
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(key)) throw new Error(`${key} is not a month (YYYY-MM)`);
+  const weeks = [];
+  for (let day = `${key}-01`; day.slice(0, 7) === key; day = addDays(day, 1)) {
+    if (new Date(`${day}T00:00:00Z`).getUTCDay() === 0) weeks.push(addDays(day, -6));
+  }
+  const label = new Date(`${key}-15T12:00:00Z`).toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  return { key, label, weeks };
+}
+
+export function previousMonth(key) {
+  return addDays(`${key}-01`, -1).slice(0, 7);
+}

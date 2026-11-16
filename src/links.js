@@ -22,3 +22,7 @@ export function reviewUrl(config, weekStart) {
 export function archiveUrl(config) {
   return `${config.publicUrl}/archive?t=${sign(config.linkSecret, 'archive')}`;
 }
+
+export function postUrl(config, kind, key) {
+  return `${config.publicUrl}/p/${kind}/${key}?t=${sign(config.linkSecret, `post:${kind}:${key}`)}`;
+}

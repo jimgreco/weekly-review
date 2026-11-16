@@ -288,12 +288,50 @@ ${commitmentSections(commitments, decideHref)}
 </main></body></html>`;
 }
 
-export function renderArchive(entries) {
+const longDate = (iso) => new Date(`${iso}T12:00:00Z`).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+
+/** The heading for a post (src/posts.js). `decision` is its register entry, for decision briefs. */
+export function describePost(post, decision = null) {
+  if (post.kind === 'pulse') return { title: 'Midweek check', subtitle: `Week of ${weekLabel({ start: post.key, end: new Date(Date.parse(`${post.key}T12:00:00Z`) + 6 * 86400000).toISOString().slice(0, 10) })}` };
+  if (post.kind === 'monthly') {
+    return { title: new Date(`${post.key}-15T12:00:00Z`).toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' }), subtitle: 'Your month in review' };
+  }
+  if (post.kind === 'decision') return decision ? { title: decision.title, subtitle: `Decision brief for ${longDate(decision.date)}` } : null;
+  return null;
+}
+
+export function renderPost(post, { archiveHref, backHref, backLabel } = {}) {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">
+<title>${esc(post.title)}</title><style>${CSS}</style></head><body><main>
+<header><h1>${esc(post.title)}</h1><p>${esc(post.subtitle)}</p></header>
+<div class="narrative">${paragraphs(post.text)}</div>
+${backHref ? `<p><a href="${esc(backHref)}">${esc(backLabel)}</a></p>` : ''}
+<footer>Generated ${esc(new Date(post.generatedAt).toLocaleString('en-US', { timeZone: 'America/New_York', dateStyle: 'medium', timeStyle: 'short' }))}${archiveHref ? ` · <a href="${esc(archiveHref)}">Past weeks</a>` : ''}</footer>
+</main></body></html>`;
+}
+
+/** Email for a post. `link` is {href, label}: the button under the text. */
+export function renderPostEmail(post, link) {
+  const html = `<!doctype html><html><body style="margin:0;background:#f6f5f1;font:16px/1.55 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#1d1d1b">
+<div style="max-width:560px;margin:0 auto;padding:24px 16px">
+<h1 style="font-size:22px;margin:0 0 4px">${esc(post.title)}</h1>
+<p style="margin:0 0 16px;color:#6d6a63">${esc(post.subtitle)}</p>
+<div style="background:#fff;border-left:4px solid #2f6f5e;border-radius:8px;padding:14px 16px;margin-bottom:16px">${paragraphs(post.text, { p: 'margin:0 0 10px', h3: 'font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:#2f6f5e;margin:16px 0 6px', ul: 'margin:0 0 10px;padding-left:18px', li: 'margin:3px 0' })}</div>
+<a href="${esc(link.href)}" style="display:inline-block;background:#2f6f5e;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px">${esc(link.label)}</a>
+<p style="font-size:12px;color:#6d6a63;margin-top:24px">This link is private to you. Anyone you forward it to can open it.</p>
+</div></body></html>`;
+  const subject = { pulse: `Midweek check: ${post.subtitle.replace(/^Week of /, '')}`, monthly: `Your month: ${post.title}`, decision: `Decision brief: ${post.title}` }[post.kind];
+  return { subject, html, text: [post.title, post.subtitle, '', post.text, '', `${link.label}: ${link.href}`].join('\n') };
+}
+
+export function renderArchive(entries, groups = []) {
   const rows = entries.map((e) => `<li><a href="${esc(e.href)}">Week of ${esc(e.label)}</a></li>`).join('');
+  const extra = groups.filter((g) => g.entries.length).map((g) => `<section><h2>${esc(g.title)}</h2><ul class="list">${g.entries.map((e) => `<li><a href="${esc(e.href)}">${esc(e.label)}</a></li>`).join('')}</ul></section>`).join('');
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">
 <title>Past reviews</title><style>${CSS}</style></head><body><main>
-<header><h1>Past reviews</h1></header><section>${rows ? `<ul class="list">${rows}</ul>` : '<p class="muted">No reviews yet.</p>'}</section>
+<header><h1>Past reviews</h1></header><section>${extra ? '<h2>Weekly reviews</h2>' : ''}${rows ? `<ul class="list">${rows}</ul>` : '<p class="muted">No reviews yet.</p>'}</section>${extra}
 </main></body></html>`;
 }
 

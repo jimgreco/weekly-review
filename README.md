@@ -47,22 +47,50 @@ Each source fails on its own. A broken, slow or unconfigured app shows a short n
 
 Commitments are stored one file per week in `DATA_DIR/commitments/<monday>.json`, named for the week they are for, apart from the stored review: re-publishing a review keeps your decisions (matched by unchanged text). Declined and unanswered proposals are never scored. Nothing is pushed into the other apps yet.
 
+## Between the reviews
+
+Two more cloud routines post shorter pieces to the same site. Each is stored, emailed at most once and readable at its own private link (`/p/<kind>/<key>?t=…`); the archive page lists them.
+
+| Routine | When | What it posts |
+|---|---|---|
+| `routine/MIDWEEK.md` | Wednesday around midday | **Pulse** (`pulse`, keyed by the week's Monday): a few lines on how the week's accepted commitments are going, from the week so far. If commitments were proposed but none accepted, a two-line nudge; if none were proposed, nothing. |
+| | | **Decision brief** (`decision`, keyed by the decision's id): for each open decision in the register dated within 7 days and not yet briefed, the evidence in one page: what you set out, what 12 weeks of data say, what the data can't tell you, and where it points. |
+| `routine/MONTHLY.md` | 1st of the month | **Monthly roll-up** (`monthly`, keyed `YYYY-MM`): the month just ended against the one before, by area, plus commitment follow-through. A month is the whole Monday–Sunday weeks that end in it. |
+
+Neither routine uses connectors. Both run in the weekly routine's cloud environment and reach the site with the same ingest token.
+
+**The decision register** is your own list of dated decisions: `id`, `date`, `title`, `question`, optional `options`, `context` (the plan and criteria the brief should judge against), `status` (`open`, `decided`, `dropped`) and `outcome`. It is personal, so it lives only on the site (`DATA_DIR/decisions.json`), never in this repository. Edit it from the Mac, which already holds the notes token:
+
+```bash
+node src/cli.js decisions pull --out /tmp/decisions.json   # edit the file
+node src/cli.js decisions push --file /tmp/decisions.json  # replaces the whole list
+```
+
+The Sunday review also sees decisions in the next 14 days and names one that falls in the coming week.
+
 ## Pieces
 
 - `src/sources.js` calls the five endpoints. It never follows redirects with a token.
-- `src/cli.js` has four commands:
+- `src/cli.js` has these commands:
   - `collect` writes the review JSON;
   - `publish` posts it with the narrative (`--send` emails once per week; `--resend` deliberately emails again; `--commitments` adds the scores and next week's proposals);
   - `render` previews the page locally;
   - `link` prints a week's private link on the site;
-  - `post-notes` (on the owner's Mac) stores the week's Claude Code summary on the site.
+  - `post-notes` (on the owner's Mac) stores the week's Claude Code summary on the site;
+  - `post` posts a pulse, decision brief or monthly roll-up (`--send` emails it once);
+  - `decisions pull` / `decisions push` (on the owner's Mac) read and replace the decision register.
+  `collect --current` collects the week in progress, and `collect --month` the last week of last month with the history to cover that month and the one before.
 - `routine/WEEKLY_REVIEW.md` holds the routine's steps and the narrative rules. The routine also has **read-only** Gmail, Google Calendar and Drive/Docs/Sheets/Slides connectors (write tools are excluded in the routine's connector settings) for week context in `## Beyond the apps` and `## Next week`. The routine's prompt just points at it.
 - `routine/CLAUDE_CODE_SUMMARY.md` holds the Mac task's steps and summary rules; `scripts/claude-code-digest.mjs` builds the local digest it summarises (typed messages and final replies only, secrets redacted, capped at ~60k chars; never tool inputs or outputs).
 - `src/commitments.js` validates and stores the commitments loop (propose, decide, score, history).
+- `src/posts.js` validates, stores and emails the posts; `src/decisions.js` validates and stores the decision register.
+- `routine/MIDWEEK.md` and `routine/MONTHLY.md` hold the other two routines' steps and writing rules.
 - `src/server.js` is the review site:
   - `POST /api/reviews` takes the ingest token, validates the review and stores it. It emails at most once per week, even if two posts race.
   - `GET /r/<monday>?t=…` and `GET /archive?t=…` serve HMAC-signed private pages.
   - `POST /r/<monday>/commitments?t=…` (form fields `id`, `decision` = `accept`, `decline` or `undo`) records a choice on one of the commitments that review proposed and redirects back to the page. It takes the page's own link token and refuses a cross-site `Origin`.
+  - `POST /api/posts` takes the ingest token and a `{kind, key, text}` post, stores it and emails it at most once. A decision brief must name a decision in the register. `GET /p/<kind>/<key>?t=…` serves it.
+  - `GET /api/decisions` returns the register (ingest or notes token) with a `briefed` flag per decision; `PUT /api/decisions` replaces it (notes token only, so the cloud routines can read but never write it).
   - `GET /api/commitments?week=<monday>` returns that week's commitments and the earlier weeks' follow-through counts to the routine, with the ingest token.
   - `PUT /api/notes/claude-code?week=<monday>` takes the notes token (`NOTES_TOKEN_SHA256`) and stores the Mac's summary as `DATA_DIR/notes/<monday>/claude-code.json`, replacing any earlier one. `GET /api/notes?week=<monday>` returns it to the routine with the ingest token. Notes are never shown on the review page or copied into the stored review.
   - `/summaries` (`src/summaries.js`, `src/google.js`) lets the owner read the stored Claude Code summaries behind Google sign-in. `GET /summaries/login` shows the Google Identity Services button; `POST /summaries/auth` checks the GIS double-submit CSRF token and verifies the ID token locally (RS256 against Google's cached JWKS; issuer, audience = `GOOGLE_CLIENT_ID`, expiry, `email_verified`, and the email on `SUMMARIES_ALLOWED_EMAILS`), then sets a 30-day `__Host-wr_summaries` cookie (HMAC with a key derived from `LINK_SECRET`; `HttpOnly; Secure; SameSite=Lax`). `GET /summaries` lists weeks with a summary, newest first; `GET /summaries/<monday>` shows one with links to the next older and newer. `POST /summaries/logout` needs a same-origin `Origin`. Unset `GOOGLE_CLIENT_ID` or allow-list = every `/summaries` route is a 404.
