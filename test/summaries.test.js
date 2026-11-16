@@ -209,7 +209,7 @@ test('summaries: login page loads GIS with its own CSP; signed-in users skip it'
   const res = await call(handler, { url: '/summaries/login' });
   assert.equal(res.status, 200);
   assert.match(res.body, /<script src="https:\/\/accounts\.google\.com\/gsi\/client" async><\/script>/);
-  assert.match(res.body, new RegExp(`data-client_id="${CLIENT_ID}"`));
+  assert.ok(res.body.includes(`data-client_id="${CLIENT_ID}"`), 'login page carries the client ID');
   assert.match(res.body, /data-login_uri="https:\/\/review\.example\/summaries\/auth"/);
   assert.match(res.body, /class="g_id_signin"/);
   const csp = res.headers['Content-Security-Policy'];
