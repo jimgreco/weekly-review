@@ -1,8 +1,11 @@
 import http from 'node:http';
 import { loadConfig } from './config.js';
 import { createStore } from './store.js';
-import { verify, reviewUrl, archiveUrl } from './links.js';
-import { renderPage, renderArchive, weekLabel } from './render.js';
+import { verify, reviewUrl, archiveUrl, postUrl } from './links.js';
+import { renderPage, renderArchive, renderPost, renderPostEmail, describePost, weekLabel } from './render.js';
+import { POST_KINDS, createPostPublisher, createPostsStore, validPostKey, validatePost } from './posts.js';
+import { createDecisionsStore, validateDecisions } from './decisions.js';
+import { sendEmail } from './email.js';
 import { addDays, weekRange } from './week.js';
 import { MAX_BODY_BYTES, InvalidReview, createPublisher, tokenMatches, validateSubmission } from './ingest.js';
 import { createNotesStore, noteWeek, validateNote } from './notes.js';
@@ -62,7 +65,22 @@ export function createHandler(config, store, {
   publish = createPublisher(config, store, { commitments }),
   notes = createNotesStore(config.dataDir || './data'),
   summaries = createSummaries(config, notes),
+  posts = createPostsStore(config.dataDir || './data'),
+  decisions = createDecisionsStore(config.dataDir || './data'),
+  sendImpl = sendEmail,
 } = {}) {
+  // Where a post's email button and page link lead: a pulse points at the
+  // review that proposed the week's commitments; the others at their own page.
+  const pulseReview = (post) => reviewUrl(config, addDays(post.key, -7));
+  const publishPost = createPostPublisher(config, posts, {
+    sendImpl,
+    describe: async (post) => describePost(post, post.kind === 'decision' ? await decisions.find(post.key) : null),
+    renderEmail: renderPostEmail,
+    urlFor: (post) => (post.kind === 'pulse'
+      ? { href: `${pulseReview(post)}#commitments`, label: "Open this week's commitments" }
+      : { href: postUrl(config, post.kind, post.key), label: 'Open the full page' }),
+  });
+  const notesOn = config.notesTokenSha256 && config.notesTokenSha256 !== config.ingestTokenSha256;
   const origin = (() => { try { return new URL(config.publicUrl).origin; } catch { return null; } })();
   return async (req, res) => {
     try {
@@ -74,7 +92,6 @@ export function createHandler(config, store, {
       // Owner notes from the Mac. Its own token, so the Mac never holds the
       // ingest token and the cloud routine can't write notes. Same 404 rules.
       if (url.pathname === '/api/notes/claude-code') {
-        const notesOn = config.notesTokenSha256 && config.notesTokenSha256 !== config.ingestTokenSha256;
         if (!notesOn || !tokenMatches(config.notesTokenSha256, req.headers.authorization)) return sendJson(res, 404, { error: 'not found' });
         if (req.method !== 'PUT') return sendJson(res, 405, { error: 'method not allowed' });
         try {
@@ -135,6 +152,41 @@ export function createHandler(config, store, {
         return res.end();
       }
 
+      // Pulses, decision briefs and monthly roll-ups from the other routines.
+      if (url.pathname === '/api/posts') {
+        if (!tokenMatches(config.ingestTokenSha256, req.headers.authorization)) return sendJson(res, 404, { error: 'not found' });
+        if (req.method !== 'POST') return sendJson(res, 405, { error: 'method not allowed' });
+        try {
+          return sendJson(res, 200, await publishPost(validatePost(await readJson(req, MAX_NOTE_BODY_BYTES))));
+        } catch (error) {
+          if (error instanceof InvalidReview) return sendJson(res, error.status ?? 400, { error: error.message });
+          if (error.status === 503) return sendJson(res, 503, { error: error.message });
+          throw error;
+        }
+      }
+
+      // The owner's decision register. The Mac replaces it (notes token) and
+      // reads it back; the routines read it (ingest token). `briefed` says
+      // whether a brief has already been posted for that decision.
+      if (url.pathname === '/api/decisions') {
+        const asRoutine = tokenMatches(config.ingestTokenSha256, req.headers.authorization);
+        const asOwner = notesOn && tokenMatches(config.notesTokenSha256, req.headers.authorization);
+        if (!asRoutine && !asOwner) return sendJson(res, 404, { error: 'not found' });
+        if (req.method === 'GET') {
+          const briefed = new Set(await posts.list('decision'));
+          return sendJson(res, 200, { decisions: (await decisions.load()).map((d) => ({ ...d, briefed: briefed.has(d.id) })) });
+        }
+        if (req.method !== 'PUT' || !asOwner) return sendJson(res, 405, { error: 'method not allowed' });
+        try {
+          const clean = validateDecisions(await readJson(req, MAX_NOTE_BODY_BYTES));
+          await decisions.save(clean);
+          return sendJson(res, 200, { stored: clean.length });
+        } catch (error) {
+          if (error instanceof InvalidReview) return sendJson(res, error.status ?? 400, { error: error.message });
+          throw error;
+        }
+      }
+
       if (url.pathname === '/api/reviews') {
         // Same 404 for "ingest off", "no token" and "wrong token".
         if (!tokenMatches(config.ingestTokenSha256, req.headers.authorization)) return sendJson(res, 404, { error: 'not found' });
@@ -165,12 +217,26 @@ export function createHandler(config, store, {
           decideHref: `/r/${week}/commitments?t=${encodeURIComponent(token)}`,
         }));
       }
+      const postPage = url.pathname.match(/^\/p\/([a-z]+)\/([a-z0-9-]{3,50})$/);
+      if (postPage) {
+        const [, kind, key] = postPage;
+        if (!Object.hasOwn(POST_KINDS, kind) || !validPostKey(kind, key) || !verify(config.linkSecret, `post:${kind}:${key}`, token)) return send(res, 404, 'Not found', 'text/plain');
+        const post = await posts.load(kind, key);
+        if (!post) return send(res, 404, 'Not found', 'text/plain');
+        const back = kind === 'pulse' && (await store.load(addDays(key, -7)))
+          ? { backHref: `${pulseReview(post)}#commitments`, backLabel: "This week's commitments" } : {};
+        return send(res, 200, renderPost(post, { archiveHref: archiveUrl(config), ...back }));
+      }
       if (url.pathname === '/archive') {
         if (!verify(config.linkSecret, 'archive', token)) return send(res, 404, 'Not found', 'text/plain');
         const weeks = await store.list();
+        const group = async (kind, title) => ({ title, entries: await Promise.all((await posts.list(kind)).map(async (key) => {
+          const post = await posts.load(kind, key);
+          return { href: postUrl(config, kind, key), label: kind === 'pulse' ? post.subtitle : post.title };
+        })) });
         return send(res, 200, renderArchive(weeks.map((w) => ({
           href: reviewUrl(config, w), label: weekLabel(weekRange(w)),
-        }))));
+        })), [await group('monthly', 'Months'), await group('decision', 'Decision briefs'), await group('pulse', 'Midweek checks')]));
       }
       return send(res, 404, 'Not found', 'text/plain');
     } catch (error) {
