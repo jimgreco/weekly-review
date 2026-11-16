@@ -49,15 +49,18 @@ Commitments are stored one file per week in `DATA_DIR/commitments/<monday>.json`
 
 ## Between the reviews
 
-Two more cloud routines post shorter pieces to the same site. Each is stored, emailed at most once and readable at its own private link (`/p/<kind>/<key>?t=…`); the archive page lists them.
+Three more cloud routines post pieces to the same site. Each is stored, emailed at most once and readable at its own private link (`/p/<kind>/<key>?t=…`); the archive page lists them.
 
 | Routine | When | What it posts |
 |---|---|---|
 | `routine/MIDWEEK.md` | Wednesday around midday | **Pulse** (`pulse`, keyed by the week's Monday): a few lines on how the week's accepted commitments are going, from the week so far. If commitments were proposed but none accepted, a two-line nudge; if none were proposed, nothing. |
 | | | **Decision brief** (`decision`, keyed by the decision's id): for each open decision in the register dated within 7 days and not yet briefed, the evidence in one page: what you set out, what 12 weeks of data say, what the data can't tell you, and where it points. |
+| `routine/CHECKIN.md` | Saturday morning | **Nutrition & training check-in** (`checkin`, keyed by the review date): a detailed coaching review of the Saturday–Friday week from Macrovana's and Rep, Mix, Burn's `GET /api/checkin-evidence` (per-day food entries, per-set logs with their historical prescriptions), set against the whole program since it started. It reads the owner's private standing context (`/api/context/checkin`) and the last check-in, which it scores. |
 | `routine/MONTHLY.md` | 1st of the month | **Monthly roll-up** (`monthly`, keyed `YYYY-MM`): the month just ended against the one before, by area, plus commitment follow-through. A month is the whole Monday–Sunday weeks that end in it. |
 
-Neither routine uses connectors. Both run in the weekly routine's cloud environment and reach the site with the same ingest token.
+None of them uses connectors. All run in the weekly routine's cloud environment and reach the site with the same ingest token. `checkin-evidence` accepts the same per-app token as `weekly-summary`, so the environment needs no extra secrets.
+
+The check-in's standing context (goals, phase, targets, load conventions) is personal, so it lives only on the site, like the decision register. Edit it from the Mac with the notes token: `node src/cli.js context pull --name checkin --out checkin.md`, then `context push --name checkin --file checkin.md`. To discuss a check-in in a Claude Code session on the Mac, run `node src/cli.js posts get --kind checkin --latest --owner` (or `--key YYYY-MM-DD`); the cloud run's own session can also be continued, with the week's evidence still in `/tmp`.
 
 **The decision register** is your own list of dated decisions: `id`, `date`, `title`, `question`, optional `options`, `context` (the plan and criteria the brief should judge against), `status` (`open`, `decided`, `dropped`) and `outcome`. It is personal, so it lives only on the site (`DATA_DIR/decisions.json`), never in this repository. Edit it from the Mac, which already holds the notes token:
 
@@ -84,7 +87,7 @@ The Sunday review also sees decisions in the next 14 days and names one that fal
 - `routine/CLAUDE_CODE_SUMMARY.md` holds the Mac task's steps and summary rules; `scripts/claude-code-digest.mjs` builds the local digest it summarises (typed messages and final replies only, secrets redacted, capped at ~60k chars; never tool inputs or outputs).
 - `src/commitments.js` validates and stores the commitments loop (propose, decide, score, history).
 - `src/posts.js` validates, stores and emails the posts; `src/decisions.js` validates and stores the decision register.
-- `routine/MIDWEEK.md` and `routine/MONTHLY.md` hold the other two routines' steps and writing rules.
+- `routine/MIDWEEK.md`, `routine/MONTHLY.md` and `routine/CHECKIN.md` hold the other routines' steps and writing rules.
 - `src/server.js` is the review site:
   - `POST /api/reviews` takes the ingest token, validates the review and stores it. It emails at most once per week, even if two posts race.
   - `GET /r/<monday>?t=…` and `GET /archive?t=…` serve HMAC-signed private pages.

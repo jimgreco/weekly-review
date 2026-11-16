@@ -127,7 +127,8 @@ test('decisions: the Mac writes, both tokens read, and briefed follows the posts
 test('posts: stored, emailed once, and served at a private link', async () => {
   const { handler, routine, sent, config, store, dir } = await site();
   assert.equal((await call(handler, { method: 'POST', url: '/api/posts', headers: { 'content-type': 'application/json' }, body: post() })).status, 404);
-  assert.equal((await call(handler, { url: '/api/posts', headers: routine })).status, 405);
+  assert.equal((await call(handler, { url: '/api/posts', headers: routine })).status, 400, 'GET needs a kind');
+  assert.equal((await call(handler, { method: 'PUT', url: '/api/posts', headers: routine, body: post() })).status, 405);
   assert.equal((await call(handler, { method: 'POST', url: '/api/posts', headers: routine, body: post({ key: 'x' }) })).status, 400);
 
   const first = JSON.parse((await call(handler, { method: 'POST', url: '/api/posts', headers: routine, body: post() })).body);
@@ -174,4 +175,49 @@ test('posts: email not configured is a 503 and the post is still stored unsent',
   const handler = createHandler({ ...config, resendApiKey: null }, createStore(dir));
   assert.equal((await call(handler, { method: 'POST', url: '/api/posts', headers: routine, body: post() })).status, 503);
   assert.equal((await createPostsStore(dir).load('pulse', '2026-11-16')).sentAt, null);
+});
+
+test('check-ins: posted, emailed with tables, read back by both tokens', async () => {
+  const { handler, routine, owner, sent, config } = await site();
+  assert.ok(validPostKey('checkin', '2026-11-21'));
+  assert.ok(!validPostKey('checkin', '2026-02-30'));
+  assert.ok(!validPostKey('checkin', '2026-11'));
+  const text = '## Nutrition\n\n| Metric | This week | Target |\n|---|---:|---:|\n| Protein | **123 g** | 140 g |\n| Calories | 2,491 | 2,400 |\n\n- Keep the sausage lunch';
+  const res = await call(handler, { method: 'POST', url: '/api/posts', headers: routine, body: post({ kind: 'checkin', key: '2026-11-21', text }) });
+  assert.equal(res.status, 200);
+  assert.equal(sent.at(-1).subject, 'Check-in: week ending Friday, November 20, 2026');
+  assert.match(sent.at(-1).html, /<table class="table"><thead><tr><th>Metric<\/th><th class="num">This week<\/th>/);
+  assert.match(sent.at(-1).html, /<td class="num"><strong>123 g<\/strong><\/td>/);
+  // The owner cannot post; only the routine can.
+  assert.equal((await call(handler, { method: 'POST', url: '/api/posts', headers: owner, body: post({ kind: 'checkin', key: '2026-11-22', text }) })).status, 405);
+
+  const list = await call(handler, { url: '/api/posts?kind=checkin', headers: owner });
+  assert.deepEqual(JSON.parse(list.body), { kind: 'checkin', keys: ['2026-11-21'] });
+  const got = JSON.parse((await call(handler, { url: '/api/posts?kind=checkin&key=2026-11-21', headers: routine })).body);
+  assert.equal(got.text, text);
+  assert.equal(got.subtitle, 'Week ending Friday, November 20, 2026');
+  assert.equal(got.url, postUrl(config, 'checkin', '2026-11-21'));
+  assert.equal((await call(handler, { url: '/api/posts?kind=checkin&key=2026-11-14', headers: routine })).status, 404);
+  assert.equal((await call(handler, { url: '/api/posts?kind=checkin&key=bad', headers: routine })).status, 400);
+  assert.equal((await call(handler, { url: '/api/posts?kind=checkin' })).status, 404, 'no token');
+
+  const page = await call(handler, { url: local(postUrl(config, 'checkin', '2026-11-21')) });
+  assert.equal(page.status, 200);
+  assert.match(page.body, /<div class="table-wrap"><table/);
+  const archive = (await call(handler, { url: local(archiveUrl(config)) })).body;
+  assert.match(archive, /Nutrition &amp; training check-ins<\/h2>.*Week ending Friday, November 20, 2026/s);
+});
+
+test('context: the Mac replaces it, the routine reads it, nobody else', async () => {
+  const { handler, routine, owner } = await site();
+  const url = '/api/context/checkin';
+  assert.equal((await call(handler, { url, headers: routine })).status, 404, 'nothing stored yet');
+  assert.equal((await call(handler, { method: 'PUT', url, headers: routine, body: { text: 'x' } })).status, 405, 'routine cannot write');
+  assert.equal((await call(handler, { method: 'PUT', url, headers: { 'content-type': 'application/json' }, body: { text: 'x' } })).status, 404);
+  assert.equal((await call(handler, { method: 'PUT', url, headers: owner, body: { text: '  ' } })).status, 400);
+  assert.equal((await call(handler, { method: 'PUT', url, headers: owner, body: { text: 'Goal: lean by May.\r\nTargets: 2,400 kcal' } })).status, 200);
+  const got = JSON.parse((await call(handler, { url, headers: routine })).body);
+  assert.equal(got.text, 'Goal: lean by May.\nTargets: 2,400 kcal');
+  assert.equal(JSON.parse((await call(handler, { url, headers: owner })).body).text, got.text);
+  assert.equal((await call(handler, { url: '/api/context/other', headers: owner })).status, 404);
 });

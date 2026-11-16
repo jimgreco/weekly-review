@@ -6,8 +6,17 @@
 //       --current is the week in progress (the midweek routine). --month is the
 //       last week of that month (default: last month) with enough history to
 //       cover it and the month before, listed under `month`.
-//   node src/cli.js post --kind pulse|decision|monthly --key <Monday|decision id|YYYY-MM> --text post.md [--model id] [--send]
-//       Post a midweek pulse, decision brief or monthly roll-up to the site (src/posts.js).
+//   node src/cli.js post --kind pulse|decision|monthly|checkin --key <Monday|decision id|YYYY-MM|YYYY-MM-DD> --text post.md [--model id] [--send]
+//       Post a midweek pulse, decision brief, monthly roll-up or check-in to the site (src/posts.js).
+//   node src/cli.js posts get --kind checkin [--key YYYY-MM-DD | --latest | --list] [--owner] [--out file]
+//       Read posts back: the routine with the ingest token (or the proxy); with
+//       --owner, the owner's Mac with the notes token (to discuss a check-in in Claude Code).
+//   node src/cli.js context get --name checkin | pull --name checkin [--out file] | push --name checkin --file context.md
+//       Private standing context for a routine (src/context.js). get: the routine
+//       (ingest token or proxy). pull/push: the owner's Mac (notes token).
+//   node src/cli.js evidence --start YYYY-MM-DD --end YYYY-MM-DD [--out evidence.json]
+//       Call Macrovana's and Rep, Mix, Burn's /api/checkin-evidence (1-31 days)
+//       with the weekly-summary tokens (or the proxy) and write both payloads.
 //   node src/cli.js decisions pull [--out decisions.json] | push --file decisions.json
 //       On the owner's Mac: read or replace the decision register on the site (notes token).
 //   node src/cli.js publish --in review.json [--narrative narrative.md] [--commitments commitments.json] [--model id] [--send]
@@ -143,11 +152,116 @@ async function main() {
     throw new Error('Usage: node src/cli.js decisions <pull [--out file] | push --file file>');
   }
 
+  // A request to the review site, as the routine (ingest token or proxy) or,
+  // with owner, as the owner's Mac (notes token).
+  const siteRequest = async (pathAndQuery, { owner = false, init = {} } = {}) => {
+    if (!config.siteUrl) throw new Error('REVIEW_SITE_URL is required');
+    checkSiteUrl(config.siteUrl);
+    let auth = {};
+    if (owner) auth = { Authorization: `Bearer ${await readNotesToken(config.notesToken, option('--token-file') ?? DEFAULT_NOTES_TOKEN_FILE)}` };
+    else if (config.ingestToken) auth = { Authorization: `Bearer ${config.ingestToken}` };
+    else if (!config.authViaProxy) throw new Error('REVIEW_INGEST_TOKEN (or AUTH_VIA_PROXY=1) is required; on the Mac pass --owner');
+    const response = await fetch(`${config.siteUrl}${pathAndQuery}`, {
+      ...init, headers: { ...auth, Accept: 'application/json', ...(init.body ? { 'Content-Type': 'application/json' } : {}) },
+      redirect: 'error', signal: AbortSignal.timeout(30000),
+    });
+    const body = await response.text();
+    if (!response.ok) throw Object.assign(new Error(`Review site returned ${response.status}: ${body.slice(0, 300)}`), { status: response.status });
+    return JSON.parse(body);
+  };
+  const output = async (text) => {
+    const out = option('--out');
+    if (out) await writeFile(out, text, { mode: 0o600 });
+    else console.log(text);
+  };
+
+  if (command === 'posts') {
+    if (args[0] !== 'get') throw new Error('Usage: node src/cli.js posts get --kind <kind> [--key k | --latest | --list] [--owner] [--out file]');
+    const kind = option('--kind');
+    if (!Object.hasOwn(POST_KINDS, kind ?? '')) throw new Error(`--kind must be one of ${Object.keys(POST_KINDS).join(', ')}`);
+    const owner = flag('--owner');
+    const q = (extra = '') => `/api/posts?kind=${encodeURIComponent(kind)}${extra}`;
+    const { keys } = await siteRequest(q(), { owner });
+    if (flag('--list')) return output(keys.join('\n'));
+    const key = flag('--latest') ? keys[0] : option('--key');
+    if (!key) {
+      if (flag('--latest')) { console.error(`No ${kind} posts yet`); return; }
+      throw new Error('--key, --latest or --list is required');
+    }
+    const post = await siteRequest(q(`&key=${encodeURIComponent(key)}`), { owner });
+    // The private page link is for the owner; the routine never needs it.
+    if (!owner) delete post.url;
+    await output(option('--out') ? JSON.stringify(post, null, 2) : `# ${post.title} (${post.subtitle}, key ${post.key})\n\n${post.text}${post.url ? `\n\nPage: ${post.url}` : ''}`);
+    console.error(`${kind} ${post.key}; ${keys.length} stored`);
+    return;
+  }
+
+  if (command === 'context') {
+    const action = args[0];
+    const name = option('--name') ?? 'checkin';
+    const route = `/api/context/${encodeURIComponent(name)}`;
+    if (action === 'get' || action === 'pull') {
+      let found;
+      try {
+        found = await siteRequest(route, { owner: action === 'pull' });
+      } catch (error) {
+        if (error.status === 404) { console.error(`No ${name} context on the site yet (or token mismatch)`); process.exitCode = 1; return; }
+        throw error;
+      }
+      await output(found.text);
+      console.error(`${name} context, updated ${found.updatedAt}`);
+      return;
+    }
+    if (action === 'push') {
+      const file = option('--file');
+      if (!file) throw new Error('--file <context.md> is required');
+      const text = (await readFile(file, 'utf8')).trim();
+      console.log(`Stored ${(await siteRequest(route, { owner: true, init: { method: 'PUT', body: JSON.stringify({ text }) } })).stored} chars of ${name} context`);
+      return;
+    }
+    throw new Error('Usage: node src/cli.js context <get|pull|push> --name checkin [--out file | --file file]');
+  }
+
+  if (command === 'evidence') {
+    const start = option('--start');
+    const end = option('--end');
+    const DATE = /^\d{4}-\d{2}-\d{2}$/;
+    if (!DATE.test(start ?? '') || !DATE.test(end ?? '') || start > end) throw new Error('--start and --end must be YYYY-MM-DD with start <= end');
+    const days = (Date.parse(end) - Date.parse(start)) / 86400000 + 1;
+    if (days > 31) throw new Error('At most 31 days per call; split longer ranges');
+    const result = { range: { start, end }, fetchedAt: new Date().toISOString(), sources: {} };
+    for (const app of ['macros', 'workouts']) {
+      const { url, token } = config.sources[app];
+      if (!url || (!token && !config.authViaProxy)) { result.sources[app] = { status: 'disabled' }; continue; }
+      try {
+        const response = await fetch(`${url}/api/checkin-evidence?start=${start}&end=${end}`, {
+          headers: token ? { Authorization: `Bearer ${token}`, Accept: 'application/json' } : { Accept: 'application/json' },
+          redirect: 'error', signal: AbortSignal.timeout(Math.max(config.fetchTimeoutMs, 30000)),
+        });
+        if (!response.ok) {
+          result.sources[app] = { status: 'error', error: `HTTP ${response.status}${response.status === 404 ? ' (endpoint off, or token mismatch)' : ''}` };
+          continue;
+        }
+        const body = await response.json();
+        if (body?.version !== 1 || body.app !== app || typeof body.data?.status !== 'string') {
+          result.sources[app] = { status: 'error', error: 'unexpected response shape' };
+          continue;
+        }
+        result.sources[app] = { timezone: body.timezone, generatedAt: body.generatedAt, ...body.data };
+      } catch (error) {
+        result.sources[app] = { status: 'error', error: error.name === 'TimeoutError' ? 'timed out' : error.message };
+      }
+    }
+    await output(JSON.stringify(result, null, 2));
+    console.error(`Evidence ${start}..${end}: ${Object.entries(result.sources).map(([a, r]) => `${a}=${r.status}${r.error ? ` (${r.error})` : ''}`).join(' ')}`);
+    return;
+  }
+
   if (command === 'post') {
     const kind = option('--kind');
     const key = option('--key');
     if (!Object.hasOwn(POST_KINDS, kind ?? '')) throw new Error(`--kind must be one of ${Object.keys(POST_KINDS).join(', ')}`);
-    if (!validPostKey(kind, key)) throw new Error('--key must be a Monday for a pulse, a decision id for a decision, or YYYY-MM for a monthly');
+    if (!validPostKey(kind, key)) throw new Error('--key must be a Monday for a pulse, a decision id for a decision, YYYY-MM for a monthly, or YYYY-MM-DD for a check-in');
     if (!option('--text')) throw new Error('--text <post.md> is required');
     if (!config.siteUrl || (!config.ingestToken && !config.authViaProxy)) throw new Error('REVIEW_SITE_URL and REVIEW_INGEST_TOKEN (or AUTH_VIA_PROXY=1) are required');
     const text = (await readFile(option('--text'), 'utf8')).trim();
@@ -260,7 +374,7 @@ async function main() {
     return;
   }
 
-  console.error('Usage: node src/cli.js <collect|publish|render|link|post|decisions|post-notes> [options]; see the top of src/cli.js');
+  console.error('Usage: node src/cli.js <collect|publish|render|link|post|posts|context|evidence|decisions|post-notes> [options]; see the top of src/cli.js');
   process.exitCode = 2;
 }
 

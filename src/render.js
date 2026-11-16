@@ -1,5 +1,6 @@
 // Server-rendered HTML for the review page and the email. Every value from
 // the data passes through esc() before it reaches markup.
+import { addDays } from './week.js';
 
 export function esc(value) {
   return String(value ?? '')
@@ -234,7 +235,7 @@ h3{font-size:14px;margin:16px 0 6px}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}.chip{background:var(--accent-soft);border-radius:999px;padding:2px 10px;font-size:13px}
 .tag{font-size:11px;border:1px solid var(--line);border-radius:4px;padding:0 4px;color:var(--muted)}
 .table{width:100%;border-collapse:collapse;margin-top:12px;font-size:14px}.table th{text-align:left;font-weight:500;color:var(--muted);font-size:12px}
-.table td,.table th{padding:6px 0;border-top:1px solid var(--line)}.num,.table .num{text-align:right;font-variant-numeric:tabular-nums}
+.table td,.table th{padding:6px 8px 6px 0;border-top:1px solid var(--line)}.table-wrap{overflow-x:auto;margin:0 0 12px}.num,.table .num{text-align:right;font-variant-numeric:tabular-nums}
 .stat .value.text{font-size:16px;line-height:1.3;padding-top:4px}
 .warn{background:var(--warn-bg);color:var(--warn);border-radius:8px;padding:8px 12px;font-size:14px}
 .kv{display:grid;grid-template-columns:90px 1fr;gap:8px;font-size:14px}.kv span{color:var(--muted)}.kv p{margin:0 0 6px}
@@ -251,6 +252,19 @@ a{color:var(--accent)}`;
 // A tiny, safe subset of Markdown for the narrative: blank-line paragraphs,
 // `## ` headings, `- ` bullet lists and **bold**. Everything is escaped first,
 // so the text can never inject markup. `style` adds inline styles for email.
+// A Markdown pipe table: header row, a |---|---:| separator, body rows.
+// Right-aligned (---:) columns get the numeric style. Rows wider than the
+// header are cut; narrower ones are padded.
+function table(lines, inline, attr) {
+  const cells = (l) => l.slice(1, -1).split('|').map((c) => c.trim());
+  const head = cells(lines[0]);
+  const hasSep = lines[1] && cells(lines[1]).every((c) => /^:?-{2,}:?$/.test(c));
+  const align = hasSep ? cells(lines[1]).map((c) => (c.endsWith(':') ? ' class="num"' : '')) : [];
+  const body = lines.slice(hasSep ? 2 : 1).map(cells);
+  const row = (r, tag) => `<tr>${head.map((_, i) => `<${tag}${align[i] ?? ''}>${inline(r[i] ?? '')}</${tag}>`).join('')}</tr>`;
+  return `<div class="table-wrap"><table class="table"${attr('table')}><thead>${row(head, 'th')}</thead><tbody>${body.map((r) => row(r, 'td')).join('')}</tbody></table></div>`;
+}
+
 export function paragraphs(text, style = {}) {
   const attr = (tag) => (style[tag] ? ` style="${style[tag]}"` : '');
   const inline = (line) => esc(line).replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
@@ -262,7 +276,9 @@ export function paragraphs(text, style = {}) {
     let heading = null;
     if (/^#{2,3} /.test(lines[0])) heading = lines.shift().replace(/^#{2,3} /, '');
     if (heading) out.push(`<h3${attr('h3')}>${inline(heading)}</h3>`);
-    if (lines.every((l) => /^[-*] /.test(l))) {
+    if (lines.length >= 2 && lines.every((l) => /^\|.*\|$/.test(l))) {
+      out.push(table(lines, inline, attr));
+    } else if (lines.every((l) => /^[-*] /.test(l))) {
       out.push(`<ul${attr('ul')}>${lines.map((l) => `<li${attr('li')}>${inline(l.slice(2))}</li>`).join('')}</ul>`);
     } else {
       out.push(`<p${attr('p')}>${lines.map(inline).join('<br>')}</p>`);
@@ -297,6 +313,7 @@ export function describePost(post, decision = null) {
     return { title: new Date(`${post.key}-15T12:00:00Z`).toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' }), subtitle: 'Your month in review' };
   }
   if (post.kind === 'decision') return decision ? { title: decision.title, subtitle: `Decision brief for ${longDate(decision.date)}` } : null;
+  if (post.kind === 'checkin') return { title: 'Nutrition & training check-in', subtitle: `Week ending ${longDate(addDays(post.key, -1))}` };
   return null;
 }
 
@@ -321,7 +338,7 @@ export function renderPostEmail(post, link) {
 <a href="${esc(link.href)}" style="display:inline-block;background:#2f6f5e;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px">${esc(link.label)}</a>
 <p style="font-size:12px;color:#6d6a63;margin-top:24px">This link is private to you. Anyone you forward it to can open it.</p>
 </div></body></html>`;
-  const subject = { pulse: `Midweek check: ${post.subtitle.replace(/^Week of /, '')}`, monthly: `Your month: ${post.title}`, decision: `Decision brief: ${post.title}` }[post.kind];
+  const subject = { pulse: `Midweek check: ${post.subtitle.replace(/^Week of /, '')}`, monthly: `Your month: ${post.title}`, decision: `Decision brief: ${post.title}`, checkin: `Check-in: ${post.subtitle.replace(/^Week ending /, 'week ending ')}` }[post.kind];
   return { subject, html, text: [post.title, post.subtitle, '', post.text, '', `${link.label}: ${link.href}`].join('\n') };
 }
 
