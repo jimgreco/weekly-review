@@ -46,7 +46,7 @@ Each source fails on its own. A broken, slow or unconfigured app shows a short n
   - `render` previews the page locally;
   - `link` prints a week's private link on the site;
   - `post-notes` (on the owner's Mac) stores the week's Claude Code summary on the site.
-- `routine/WEEKLY_REVIEW.md` holds the routine's steps and the narrative rules. The routine's prompt just points at it.
+- `routine/WEEKLY_REVIEW.md` holds the routine's steps and the narrative rules. The routine also has **read-only** Gmail, Google Calendar and Drive/Docs/Sheets/Slides connectors (write tools are excluded in the routine's connector settings) for week context in `## Beyond the apps` and `## Next week`. The routine's prompt just points at it.
 - `routine/CLAUDE_CODE_SUMMARY.md` holds the Mac task's steps and summary rules; `scripts/claude-code-digest.mjs` builds the local digest it summarises (typed messages and final replies only, secrets redacted, capped at ~60k chars; never tool inputs or outputs).
 - `src/server.js` is the review site:
   - `POST /api/reviews` takes the ingest token, validates the review and stores it. It emails at most once per week, even if two posts race.
