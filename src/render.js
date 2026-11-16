@@ -151,6 +151,62 @@ function planner(s) {
     + `<h3>Coming up</h3>${noteRows}${s.nextWeek.tasks.length ? `<ul class="list">${s.nextWeek.tasks.map(taskLine).join('')}</ul>` : '<p class="muted">Nothing planned yet.</p>'}`;
 }
 
+const AREA_LABEL = { nutrition: 'Nutrition', training: 'Training', activity: 'Activity', money: 'Money', habits: 'Habits', home: 'Home', other: 'Other' };
+const OUTCOME_LABEL = { hit: 'Hit', partial: 'Partly', miss: 'Missed', unknown: 'No data' };
+
+function commitmentBody(c) {
+  return `<div class="c-text"><span class="c-name">${esc(c.text)}</span> <span class="tag">${esc(AREA_LABEL[c.area] ?? 'Other')}</span></div>
+      ${c.measure ? `<div class="c-sub">Counts if: ${esc(c.measure)}</div>` : ''}`;
+}
+
+// Last week's accepted commitments with how they went (scored by this review).
+function commitmentsDue(record) {
+  const accepted = record.items.filter((c) => c.decision === 'accepted');
+  const hit = accepted.filter((c) => c.outcome === 'hit').length;
+  const rows = accepted.map((c) => `
+    <li class="commit"><div class="c-main">${commitmentBody(c)}
+      ${c.note ? `<div class="c-sub">${esc(c.note)}</div>` : ''}</div>
+      <span class="badge ${esc(c.outcome ?? 'pending')}">${esc(OUTCOME_LABEL[c.outcome] ?? 'Not scored yet')}</span></li>`).join('');
+  return `<section id="scorecard"><h2>Last week's commitments</h2>
+    ${record.scoredAt ? `<div class="stats">${stat('Kept', `${hit}/${accepted.length}`, 'accepted commitments hit')}</div>` : ''}
+    <ul class="list">${rows}</ul></section>`;
+}
+
+// The commitments this review proposes for the coming week. With decideHref
+// each one gets Accept / Decline buttons (plain form posts, no script).
+function commitmentsNext(record, decideHref) {
+  const open = decideHref && !record.scoredAt;
+  const button = (c, decision, label, cls = '') => `<form method="post" action="${esc(decideHref)}"><input type="hidden" name="id" value="${esc(c.id)}"><input type="hidden" name="decision" value="${decision}"><button type="submit"${cls ? ` class="${cls}"` : ''}>${label}</button></form>`;
+  const rows = record.items.map((c) => {
+    const state = c.decision === 'accepted' ? '<span class="badge hit">Accepted</span>'
+      : c.decision === 'declined' ? '<span class="badge unknown">Declined</span>' : '';
+    const actions = !open ? state
+      : c.decision ? `${state}${button(c, 'undo', 'Change', 'quiet')}`
+        : `${button(c, 'accept', 'Accept', 'primary')}${button(c, 'decline', 'Decline')}`;
+    return `
+    <li class="commit${c.decision === 'declined' ? ' declined' : ''}"><div class="c-main">${commitmentBody(c)}</div>
+      <div class="c-actions">${actions}</div></li>`;
+  }).join('');
+  const accepted = record.items.filter((c) => c.decision === 'accepted').length;
+  const hint = record.scoredAt ? 'This week has been scored.'
+    : !decideHref ? ''
+      : accepted ? `${accepted} accepted. Next Sunday's review scores only the ones you accept.`
+        : "Accept the ones you'll commit to. Next Sunday's review scores only those.";
+  return `<section id="commitments"><h2>Commitments for the coming week</h2>
+    <ul class="list">${rows}</ul>${hint ? `<p class="note">${esc(hint)}</p>` : ''}</section>`;
+}
+
+function commitmentSections({ due, next } = {}, decideHref) {
+  let html = '';
+  try {
+    if (due?.items?.some((c) => c.decision === 'accepted')) html += commitmentsDue(due);
+    if (next?.items?.length) html += commitmentsNext(next, decideHref);
+  } catch (error) {
+    console.error('[render] commitments have an unexpected shape:', error.message);
+  }
+  return html;
+}
+
 const CSS = `
 :root{--bg:#f6f5f1;--card:#fff;--ink:#1d1d1b;--muted:#6d6a63;--line:#e4e1d8;--accent:#2f6f5e;--accent-soft:#d8e9e3;--warn:#8a5a00;--warn-bg:#fbefd5}
 @media (prefers-color-scheme:dark){:root{--bg:#141413;--card:#1e1e1c;--ink:#ecebe6;--muted:#a19e95;--line:#33322e;--accent:#7cc3ad;--accent-soft:#25403a;--warn:#f0c46a;--warn-bg:#3a2f17}}
@@ -182,6 +238,13 @@ h3{font-size:14px;margin:16px 0 6px}
 .stat .value.text{font-size:16px;line-height:1.3;padding-top:4px}
 .warn{background:var(--warn-bg);color:var(--warn);border-radius:8px;padding:8px 12px;font-size:14px}
 .kv{display:grid;grid-template-columns:90px 1fr;gap:8px;font-size:14px}.kv span{color:var(--muted)}.kv p{margin:0 0 6px}
+.commit{display:flex;gap:12px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap}.commit.declined .c-name{color:var(--muted);text-decoration:line-through}
+.c-main{flex:1 1 260px;min-width:0}.c-sub{font-size:13px;color:var(--muted);margin-top:2px}
+.c-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.c-actions form{margin:0}
+.c-actions button{font:inherit;font-size:14px;min-height:36px;padding:4px 14px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--ink);cursor:pointer}
+.c-actions button.primary{background:var(--accent);border-color:var(--accent);color:var(--card)}.c-actions button.quiet{font-size:13px;color:var(--muted);min-height:28px;padding:2px 10px}
+.badge{font-size:12px;border-radius:999px;padding:2px 10px;white-space:nowrap;background:var(--line);color:var(--muted)}
+.badge.hit{background:var(--accent-soft);color:var(--accent)}.badge.partial,.badge.miss{background:var(--warn-bg);color:var(--warn)}
 footer{text-align:center;font-size:13px;color:var(--muted);margin-top:24px}footer a{color:var(--muted)}
 a{color:var(--accent)}`;
 
@@ -208,13 +271,14 @@ export function paragraphs(text, style = {}) {
   }).join('');
 }
 
-export function renderPage(review, { archiveHref } = {}) {
+export function renderPage(review, { archiveHref, commitments, decideHref } = {}) {
   const s = review.sources;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">
 <title>Week of ${esc(weekLabel(review.week))}</title><style>${CSS}</style></head><body><main>
 <header><h1>Week of ${esc(weekLabel(review.week))}</h1><p>Your weekly review</p></header>
 ${review.narrative ? `<div class="narrative">${paragraphs(review.narrative.text)}</div>` : ''}
+${commitmentSections(commitments, decideHref)}
 <section><h2>Nutrition &amp; recovery</h2>${section('Macrovana', nutrition, s.macros)}</section>
 <section><h2>Training</h2>${section('Rep, Mix, Burn', training, s.workouts)}</section>
 <section><h2>Spending</h2>${section('Spending', spending, s.spending, review.week)}</section>
@@ -255,7 +319,7 @@ export function headlines(review) {
   return out;
 }
 
-export function renderEmail(review, url) {
+export function renderEmail(review, url, { hasCommitments = false } = {}) {
   const lines = headlines(review);
   const narrative = review.narrative?.text ?? '';
   const html = `<!doctype html><html><body style="margin:0;background:#f6f5f1;font:16px/1.55 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#1d1d1b">
@@ -263,10 +327,10 @@ export function renderEmail(review, url) {
 <h1 style="font-size:22px;margin:0 0 16px">Week of ${esc(weekLabel(review.week))}</h1>
 ${narrative ? `<div style="background:#fff;border-left:4px solid #2f6f5e;border-radius:8px;padding:14px 16px;margin-bottom:16px">${paragraphs(narrative, { p: 'margin:0 0 10px', h3: 'font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:#2f6f5e;margin:16px 0 6px', ul: 'margin:0 0 10px;padding-left:18px', li: 'margin:3px 0' })}</div>` : ''}
 <ul style="padding-left:18px;margin:0 0 20px">${lines.map((l) => `<li style="margin:4px 0">${esc(l)}</li>`).join('')}</ul>
-<a href="${esc(url)}" style="display:inline-block;background:#2f6f5e;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px">Open the full review</a>
+<a href="${esc(url)}" style="display:inline-block;background:#2f6f5e;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px">${hasCommitments ? 'Open the review and choose your commitments' : 'Open the full review'}</a>
 <p style="font-size:12px;color:#6d6a63;margin-top:24px">This link is private to you. Anyone you forward it to can open this week's review.</p>
 </div></body></html>`;
-  const text = [`Week of ${weekLabel(review.week)}`, '', narrative, '', ...lines.map((l) => `- ${l}`), '', `Full review: ${url}`]
+  const text = [`Week of ${weekLabel(review.week)}`, '', narrative, '', ...lines.map((l) => `- ${l}`), '', `${hasCommitments ? 'Choose your commitments for the week on the full review' : 'Full review'}: ${url}`]
     .filter((l, i, a) => !(l === '' && a[i - 1] === '')).join('\n');
   return { subject: `Your week: ${weekLabel(review.week)}`, html, text };
 }
