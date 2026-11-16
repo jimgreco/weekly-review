@@ -1,10 +1,11 @@
 # Turning on Weekly Review
 
-There are three parts, all done by the owner:
+There are four parts, all done by the owner:
 
 1. Each app's weekly-summary endpoint.
 2. The review site on the shared EC2 host.
 3. The cloud routine.
+4. Optional: the Mac task that adds the Claude Code summary.
 
 GitHub changes the server only through the main-branch release described in 2c, which replaces this one container. Other server steps run over the existing pinned SSH connection, under the shared `~/deploy/.app-release.lock`, and never print a secret.
 
@@ -159,10 +160,35 @@ The routine's session never holds a token. Each one is a **network secret** on t
    ```
 4. Run the routine once now, then confirm you received the email and every app shows `ok`.
 
+## 4. Claude Code summary (Mac task, optional)
+
+The Mac summarises the week's Claude Code sessions and posts only the summary (`routine/CLAUDE_CODE_SUMMARY.md`). Its notes token lives only on the Mac; the site stores its SHA-256. It must differ from the ingest token.
+
+1. **Token, on the Mac:**
+
+   ```bash
+   umask 077; mkdir -p ~/.config/weekly-review
+   openssl rand -base64 32 | tr -d '=+/\n' | cut -c1-40 > ~/.config/weekly-review/notes.token
+   chmod 600 ~/.config/weekly-review/notes.token
+   printf %s "$(cat ~/.config/weekly-review/notes.token)" | shasum -a 256 | cut -d' ' -f1   # not secret
+   ```
+2. **Site:** over the pinned SSH connection, under `~/deploy/.app-release.lock`, add `NOTES_TOKEN_SHA256=<that hash>` to `~/deploy/weekly-review.env` (mode 600). Then recreate `weekly-review` straight away with the running container's recorded Compose chain (the `-f` files in its `com.docker.compose.project.config_files` label, which include the `~/deploy/releases/weekly-review-image-<sha>.json` override), e.g. `docker-compose -f <each recorded file> --profile weekly-review up -d --no-deps weekly-review`. Do it right after the edit: the CI release's drift check (`deploy-app.sh` / `release.py`) hashes the resolved service model, env_file values included, so an edited but not-yet-applied env file makes the next release refuse. The site must already run a build that has the notes routes.
+3. **Check from the Mac** (first prints `404`, second `{"week":"…","stored":true}`):
+
+   ```bash
+   curl -s -o /dev/null -w '%{http_code}\n' -X PUT "https://review.jim-greco.com/api/notes/claude-code?week=2026-11-02"
+   printf -- '- Test note, replaced on Sunday.\n' > /tmp/note.md
+   REVIEW_SITE_URL=https://review.jim-greco.com node ~/code/weekly-review/src/cli.js post-notes --week 2026-11-02 --file /tmp/note.md; rm /tmp/note.md
+   ```
+4. **Scheduled task:** in Claude Desktop → Scheduled → New task, weekly on Sunday at 5:30 pm, working folder `~/code/weekly-review`, prompt "Follow routine/CLAUDE_CODE_SUMMARY.md in ~/code/weekly-review exactly." Allow Bash, Read and Write. Run it once now and check the report says the post worked; the next cloud review then shows `notes=ok` and a `## Beyond the apps` section.
+
+The cloud routine needs nothing new: it reads notes with the ingest token, which is already its network secret for the site.
+
 ## Rotating or revoking
 
 - **One app:** replace its `~/deploy/weekly-summary-<service>.yml` hash (then recreate that service with its recorded files) and its network secret in the cloud environment. Clearing the variable turns that app's endpoint off; the review then shows the app as unavailable.
 - **Ingest:** replace `INGEST_TOKEN_SHA256` in `weekly-review.env` and recreate the container.
+- **Notes:** write a new `~/.config/weekly-review/notes.token`, replace `NOTES_TOKEN_SHA256` in `weekly-review.env` and recreate the container with its recorded files. Removing the variable turns notes posting off; stored notes stay under `weekly-review-data/notes` until deleted. To stop the summary, also turn off the Desktop task.
 
 ## Rollback
 

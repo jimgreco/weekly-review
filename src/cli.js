@@ -10,9 +10,15 @@
 //       Write the page locally, to check it before publishing.
 //   node src/cli.js link [--week 2026-11-02]
 //       On the review site: print the private links for a week and the archive.
-import { readFile, writeFile } from 'node:fs/promises';
+//   node src/cli.js post-notes --week 2026-11-02 --file summary.md [--token-file path]
+//       On the owner's Mac: store the week's Claude Code summary on the site.
+//       Token from NOTES_TOKEN, else --token-file (default ~/.config/weekly-review/notes.token).
+import { readFile, stat, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import path from 'node:path';
 import { APPS, loadConfig } from './config.js';
-import { collectHistory, collectWeek } from './sources.js';
+import { collectHistory, collectNotes, collectWeek } from './sources.js';
+import { MAX_NOTE_CHARS } from './notes.js';
 import { renderPage } from './render.js';
 import { reviewUrl, archiveUrl } from './links.js';
 import { currentWeek, localParts, previousWeek, weekRange } from './week.js';
@@ -39,7 +45,56 @@ async function loadSubmission() {
   return { review, narrative: text ? { text, model: option('--model') ?? null } : null };
 }
 
+export const DEFAULT_NOTES_TOKEN_FILE = path.join(homedir(), '.config', 'weekly-review', 'notes.token');
+
+/** The notes token, from NOTES_TOKEN or a file. Never logged. */
+export async function readNotesToken(envToken, tokenFile = DEFAULT_NOTES_TOKEN_FILE) {
+  let token = envToken;
+  if (!token) {
+    try {
+      token = (await readFile(tokenFile, 'utf8')).trim();
+    } catch (error) {
+      throw new Error(`No NOTES_TOKEN and no readable token file at ${tokenFile} (${error.code ?? 'error'})`);
+    }
+    const { mode } = await stat(tokenFile);
+    if (mode & 0o077) console.error(`Warning: ${tokenFile} is readable by others; chmod 600 it`);
+  }
+  if (!/^\S{20,256}$/.test(token)) throw new Error('The notes token is malformed (expected 20-256 non-space characters)');
+  return token;
+}
+
+function checkSiteUrl(siteUrl) {
+  const url = new URL(siteUrl);
+  const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+  if (url.protocol !== 'https:' && !(local && url.protocol === 'http:')) throw new Error('REVIEW_SITE_URL must be https');
+}
+
 async function main() {
+  if (command === 'post-notes') {
+    if (!option('--week')) throw new Error('--week <Monday> is required');
+    const week = weekRange(option('--week')).start;
+    const file = option('--file');
+    if (!file) throw new Error('--file <summary.md> is required');
+    if (!config.siteUrl) throw new Error('REVIEW_SITE_URL is required');
+    checkSiteUrl(config.siteUrl);
+    const text = (await readFile(file, 'utf8')).trim();
+    if (!text) throw new Error(`${file} is empty`);
+    if (text.length > MAX_NOTE_CHARS) throw new Error(`${file} is over ${MAX_NOTE_CHARS} characters`);
+    const token = await readNotesToken(config.notesToken, option('--token-file') ?? DEFAULT_NOTES_TOKEN_FILE);
+    const response = await fetch(`${config.siteUrl}/api/notes/claude-code?week=${encodeURIComponent(week)}`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, generatedAt: new Date().toISOString() }),
+      redirect: 'error', // never send the token anywhere else
+      signal: AbortSignal.timeout(30000),
+    });
+    const body = await response.text();
+    if (response.status === 404) throw new Error('Review site returned 404 (notes off, or token mismatch)');
+    if (!response.ok) throw new Error(`Review site returned ${response.status}: ${body.slice(0, 300)}`);
+    console.log(`Stored the Claude Code notes for ${JSON.parse(body).week} (${text.length} chars)`);
+    return;
+  }
+
   const week = option('--week') ? weekRange(option('--week')) : defaultWeek(new Date(), config.timezone);
 
   if (command === 'collect') {
@@ -47,6 +102,8 @@ async function main() {
     const weeks = Number(option('--history') ?? 0);
     if (!Number.isInteger(weeks) || weeks < 0 || weeks > 12) throw new Error('--history must be 0-12 weeks');
     if (weeks) review.history = await collectHistory(config, week, weeks);
+    const notes = await collectNotes(config, week);
+    review.notes = notes.notes;
     const json = JSON.stringify(review, null, 2);
     const out = option('--out');
     if (out) await writeFile(out, json, { mode: 0o600 });
@@ -57,6 +114,7 @@ async function main() {
       const gaps = APPS.flatMap((app) => review.history.sources[app].filter((w) => w.status !== 'ok').map((w) => `${app}@${w.week}=${w.status}`));
       console.error(`History: ${review.history.weeks.length} weeks${gaps.length ? `; not ok: ${gaps.join(', ')}` : ', all ok'}`);
     }
+    console.error(`Notes: notes=${notes.status}${notes.error ? ` (${notes.error})` : ''}`);
     return;
   }
 
@@ -64,7 +122,8 @@ async function main() {
     if (!config.siteUrl || (!config.ingestToken && !config.authViaProxy)) {
       throw new Error('REVIEW_SITE_URL and REVIEW_INGEST_TOKEN (or AUTH_VIA_PROXY=1) are required');
     }
-    const { review: { history: _history, ...review }, narrative } = await loadSubmission(); // history is narrative context only
+    // history and notes are narrative context only; they never reach the stored review.
+    const { review: { history: _history, notes: _notes, ...review }, narrative } = await loadSubmission();
     const response = await fetch(`${config.siteUrl}/api/reviews`, {
       method: 'POST',
       headers: config.ingestToken
@@ -82,7 +141,7 @@ async function main() {
   }
 
   if (command === 'render') {
-    const { review, narrative } = await loadSubmission();
+    const { review: { notes: _notes, ...review }, narrative } = await loadSubmission();
     const out = option('--out');
     if (!out) throw new Error('--out <page.html> is required');
     await writeFile(out, renderPage({ ...review, narrative }));
@@ -96,7 +155,7 @@ async function main() {
     return;
   }
 
-  console.error('Usage: node src/cli.js <collect|publish|render|link> [options]; see the top of src/cli.js');
+  console.error('Usage: node src/cli.js <collect|publish|render|link|post-notes> [options]; see the top of src/cli.js');
   process.exitCode = 2;
 }
 

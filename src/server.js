@@ -5,6 +5,9 @@ import { verify, reviewUrl, archiveUrl } from './links.js';
 import { renderPage, renderArchive, weekLabel } from './render.js';
 import { weekRange } from './week.js';
 import { MAX_BODY_BYTES, InvalidReview, createPublisher, tokenMatches, validateSubmission } from './ingest.js';
+import { createNotesStore, noteWeek, validateNote } from './notes.js';
+
+const MAX_NOTE_BODY_BYTES = 64 * 1024;
 
 const SECURITY_HEADERS = {
   'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
@@ -20,7 +23,7 @@ function send(res, status, body, type = 'text/html; charset=utf-8') {
 
 const sendJson = (res, status, body) => send(res, status, JSON.stringify(body), 'application/json');
 
-async function readJson(req) {
+async function readJson(req, maxBytes = MAX_BODY_BYTES) {
   if (!/^application\/json\b/.test(req.headers['content-type'] || '')) {
     throw Object.assign(new InvalidReview('Content-Type must be application/json'), { status: 415 });
   }
@@ -28,7 +31,7 @@ async function readJson(req) {
   let size = 0;
   for await (const chunk of req) {
     size += chunk.length;
-    if (size > MAX_BODY_BYTES) throw Object.assign(new InvalidReview('body too large'), { status: 413 });
+    if (size > maxBytes) throw Object.assign(new InvalidReview('body too large'), { status: 413 });
     chunks.push(chunk);
   }
   try {
@@ -38,10 +41,38 @@ async function readJson(req) {
   }
 }
 
-export function createHandler(config, store, { publish = createPublisher(config, store) } = {}) {
+export function createHandler(config, store, {
+  publish = createPublisher(config, store),
+  notes = createNotesStore(config.dataDir || './data'),
+} = {}) {
   return async (req, res) => {
     try {
       const url = new URL(req.url, 'http://localhost');
+
+      // Owner notes from the Mac. Its own token, so the Mac never holds the
+      // ingest token and the cloud routine can't write notes. Same 404 rules.
+      if (url.pathname === '/api/notes/claude-code') {
+        const notesOn = config.notesTokenSha256 && config.notesTokenSha256 !== config.ingestTokenSha256;
+        if (!notesOn || !tokenMatches(config.notesTokenSha256, req.headers.authorization)) return sendJson(res, 404, { error: 'not found' });
+        if (req.method !== 'PUT') return sendJson(res, 405, { error: 'method not allowed' });
+        try {
+          const week = noteWeek(url.searchParams.get('week'));
+          await notes.save(week, 'claude-code', validateNote(await readJson(req, MAX_NOTE_BODY_BYTES)));
+          return sendJson(res, 200, { week, stored: true });
+        } catch (error) {
+          if (error instanceof InvalidReview) return sendJson(res, error.status ?? 400, { error: error.message });
+          throw error;
+        }
+      }
+
+      // The routine reads notes with the ingest token (a network secret for this host).
+      if (url.pathname === '/api/notes') {
+        if (!tokenMatches(config.ingestTokenSha256, req.headers.authorization)) return sendJson(res, 404, { error: 'not found' });
+        if (req.method !== 'GET') return sendJson(res, 405, { error: 'method not allowed' });
+        let week;
+        try { week = noteWeek(url.searchParams.get('week')); } catch (error) { return sendJson(res, 400, { error: error.message }); }
+        return sendJson(res, 200, { week, notes: await notes.loadAll(week) });
+      }
 
       if (url.pathname === '/api/reviews') {
         // Same 404 for "ingest off", "no token" and "wrong token".
