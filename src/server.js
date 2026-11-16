@@ -3,15 +3,18 @@ import { loadConfig } from './config.js';
 import { createStore } from './store.js';
 import { verify, reviewUrl, archiveUrl } from './links.js';
 import { renderPage, renderArchive, weekLabel } from './render.js';
-import { weekRange } from './week.js';
+import { addDays, weekRange } from './week.js';
 import { MAX_BODY_BYTES, InvalidReview, createPublisher, tokenMatches, validateSubmission } from './ingest.js';
 import { createNotesStore, noteWeek, validateNote } from './notes.js';
 import { createSummaries } from './summaries.js';
+import { CommitmentConflict, createCommitmentsStore, forRoutine } from './commitments.js';
 
 const MAX_NOTE_BODY_BYTES = 64 * 1024;
+const MAX_FORM_BYTES = 4 * 1024;
+const HISTORY_WEEKS = 8;
 
 const SECURITY_HEADERS = {
-  'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+  'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
   'Referrer-Policy': 'no-referrer', // keep the token out of Referer headers
   'X-Content-Type-Options': 'nosniff',
   'Cache-Control': 'private, no-store',
@@ -42,11 +45,25 @@ async function readJson(req, maxBytes = MAX_BODY_BYTES) {
   }
 }
 
+async function readForm(req) {
+  if (!/^application\/x-www-form-urlencoded\b/.test(req.headers['content-type'] || '')) return null;
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > MAX_FORM_BYTES) return null;
+    chunks.push(chunk);
+  }
+  return new URLSearchParams(Buffer.concat(chunks).toString('utf8'));
+}
+
 export function createHandler(config, store, {
-  publish = createPublisher(config, store),
+  commitments = createCommitmentsStore(config.dataDir || './data'),
+  publish = createPublisher(config, store, { commitments }),
   notes = createNotesStore(config.dataDir || './data'),
   summaries = createSummaries(config, notes),
 } = {}) {
+  const origin = (() => { try { return new URL(config.publicUrl).origin; } catch { return null; } })();
   return async (req, res) => {
     try {
       const url = new URL(req.url, 'http://localhost');
@@ -79,6 +96,45 @@ export function createHandler(config, store, {
         return sendJson(res, 200, { week, notes: await notes.loadAll(week) });
       }
 
+      // The routine reads the commitments that were for the review week (to
+      // score them) and the follow-through of the weeks before. Ingest token.
+      if (url.pathname === '/api/commitments') {
+        if (!tokenMatches(config.ingestTokenSha256, req.headers.authorization)) return sendJson(res, 404, { error: 'not found' });
+        if (req.method !== 'GET') return sendJson(res, 405, { error: 'method not allowed' });
+        let week;
+        try { week = noteWeek(url.searchParams.get('week')); } catch (error) { return sendJson(res, 400, { error: error.message }); }
+        return sendJson(res, 200, {
+          week,
+          due: forRoutine(await commitments.load(week)),
+          history: await commitments.history(week, HISTORY_WEEKS),
+        });
+      }
+
+      // Accept, decline or undo one of next week's commitments from the review
+      // page. The page's private link token is the credential, as for reading.
+      const decide = url.pathname.match(/^\/r\/(\d{4}-\d{2}-\d{2})\/commitments$/);
+      if (decide) {
+        const week = decide[1];
+        if (!verify(config.linkSecret, `review:${week}`, url.searchParams.get('t'))) return send(res, 404, 'Not found', 'text/plain');
+        if (req.method !== 'POST') return send(res, 405, 'Method not allowed', 'text/plain');
+        // The token in the URL already stops cross-site posts; this is a second
+        // check. Browsers send "null" here because of the no-referrer policy.
+        const from = req.headers.origin;
+        if (from && from !== 'null' && from !== origin) return send(res, 403, 'Forbidden', 'text/plain');
+        const form = await readForm(req);
+        const decision = { accept: 'accepted', decline: 'declined', undo: null }[form?.get('decision')];
+        if (!form || decision === undefined) return send(res, 400, 'Bad request', 'text/plain');
+        if (!(await store.load(week))) return send(res, 404, 'Not found', 'text/plain');
+        try {
+          await commitments.decide(addDays(week, 7), form.get('id') ?? '', decision);
+        } catch (error) {
+          // Unknown id, or a week the next review has already scored: just show the page as it is.
+          if (!(error instanceof CommitmentConflict)) throw error;
+        }
+        res.writeHead(303, { Location: `${reviewUrl(config, week)}#commitments`, ...SECURITY_HEADERS });
+        return res.end();
+      }
+
       if (url.pathname === '/api/reviews') {
         // Same 404 for "ingest off", "no token" and "wrong token".
         if (!tokenMatches(config.ingestTokenSha256, req.headers.authorization)) return sendJson(res, 404, { error: 'not found' });
@@ -103,7 +159,11 @@ export function createHandler(config, store, {
         if (!verify(config.linkSecret, `review:${week}`, token)) return send(res, 404, 'Not found', 'text/plain');
         const data = await store.load(week);
         if (!data) return send(res, 404, 'Not found', 'text/plain');
-        return send(res, 200, renderPage(data, { archiveHref: archiveUrl(config) }));
+        return send(res, 200, renderPage(data, {
+          archiveHref: archiveUrl(config),
+          commitments: { due: await commitments.load(week), next: await commitments.load(addDays(week, 7)) },
+          decideHref: `/r/${week}/commitments?t=${encodeURIComponent(token)}`,
+        }));
       }
       if (url.pathname === '/archive') {
         if (!verify(config.linkSecret, 'archive', token)) return send(res, 404, 'Not found', 'text/plain');

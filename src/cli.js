@@ -3,10 +3,11 @@
 //   node src/cli.js collect [--week 2026-11-02] [--out review.json]
 //       Call every app's weekly-summary endpoint and write the review JSON.
 //       Default week: the current one on Sunday, otherwise the last finished week.
-//   node src/cli.js publish --in review.json [--narrative narrative.md] [--model id] [--send]
+//   node src/cli.js publish --in review.json [--narrative narrative.md] [--commitments commitments.json] [--model id] [--send]
 //       Post the review (and narrative) to the review site. --send emails the
-//       link, at most once per week.
-//   node src/cli.js render --in review.json [--narrative narrative.md] --out page.html
+//       link, at most once per week. --commitments scores this week's accepted
+//       commitments and proposes next week's ({results, next}; src/commitments.js).
+//   node src/cli.js render --in review.json [--narrative narrative.md] [--commitments commitments.json] --out page.html
 //       Write the page locally, to check it before publishing.
 //   node src/cli.js link [--week 2026-11-02]
 //       On the review site: print the private links for a week and the archive.
@@ -17,7 +18,8 @@ import { readFile, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { APPS, loadConfig } from './config.js';
-import { collectHistory, collectNotes, collectWeek } from './sources.js';
+import { collectCommitments, collectHistory, collectNotes, collectWeek } from './sources.js';
+import { validateCommitments } from './commitments.js';
 import { MAX_NOTE_CHARS } from './notes.js';
 import { renderPage } from './render.js';
 import { reviewUrl, archiveUrl } from './links.js';
@@ -42,7 +44,10 @@ async function loadSubmission() {
   const review = JSON.parse(await readFile(input, 'utf8'));
   const narrativeFile = option('--narrative');
   const text = narrativeFile ? (await readFile(narrativeFile, 'utf8')).trim() : '';
-  return { review, narrative: text ? { text, model: option('--model') ?? null } : null };
+  // Checked here too, so a mistake in the file is reported before anything is posted.
+  const commitmentsFile = option('--commitments');
+  const commitments = commitmentsFile ? validateCommitments(JSON.parse(await readFile(commitmentsFile, 'utf8'))) : null;
+  return { review, narrative: text ? { text, model: option('--model') ?? null } : null, commitments };
 }
 
 export const DEFAULT_NOTES_TOKEN_FILE = path.join(homedir(), '.config', 'weekly-review', 'notes.token');
@@ -104,6 +109,8 @@ async function main() {
     if (weeks) review.history = await collectHistory(config, week, weeks);
     const notes = await collectNotes(config, week);
     review.notes = notes.notes;
+    const commitments = await collectCommitments(config, week);
+    review.commitments = commitments.commitments;
     const json = JSON.stringify(review, null, 2);
     const out = option('--out');
     if (out) await writeFile(out, json, { mode: 0o600 });
@@ -115,6 +122,7 @@ async function main() {
       console.error(`History: ${review.history.weeks.length} weeks${gaps.length ? `; not ok: ${gaps.join(', ')}` : ', all ok'}`);
     }
     console.error(`Notes: notes=${notes.status}${notes.error ? ` (${notes.error})` : ''}`);
+    console.error(`Commitments: commitments=${commitments.status}${commitments.error ? ` (${commitments.error})` : ''}${commitments.summary ? ` (${commitments.summary})` : ''}`);
     return;
   }
 
@@ -122,14 +130,15 @@ async function main() {
     if (!config.siteUrl || (!config.ingestToken && !config.authViaProxy)) {
       throw new Error('REVIEW_SITE_URL and REVIEW_INGEST_TOKEN (or AUTH_VIA_PROXY=1) are required');
     }
-    // history and notes are narrative context only; they never reach the stored review.
-    const { review: { history: _history, notes: _notes, ...review }, narrative } = await loadSubmission();
+    // history, notes and the commitments read back from the site are narrative
+    // context only; they never reach the stored review.
+    const { review: { history: _history, notes: _notes, commitments: _due, ...review }, narrative, commitments } = await loadSubmission();
     const response = await fetch(`${config.siteUrl}/api/reviews`, {
       method: 'POST',
       headers: config.ingestToken
         ? { Authorization: `Bearer ${config.ingestToken}`, 'Content-Type': 'application/json' }
         : { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ review, narrative, send: flag('--send') || flag('--resend'), resend: flag('--resend') }),
+      body: JSON.stringify({ review, narrative, ...(commitments ? { commitments } : {}), send: flag('--send') || flag('--resend'), resend: flag('--resend') }),
       redirect: 'error',
       signal: AbortSignal.timeout(30000),
     });
@@ -137,14 +146,24 @@ async function main() {
     if (!response.ok) throw new Error(`Review site returned ${response.status}: ${body.slice(0, 300)}`);
     const result = JSON.parse(body);
     console.log(`Published ${result.week}; ${result.sent ? 'emailed now' : result.sentAt ? `already emailed at ${result.sentAt}` : 'not emailed'}`);
+    if (result.commitments) {
+      const { scored, ignored, proposed } = result.commitments;
+      console.log(`Commitments: ${scored} scored${ignored ? ` (${ignored} ignored: not accepted, or unknown id)` : ''}, ${proposed} proposed for next week`);
+    }
     return;
   }
 
   if (command === 'render') {
-    const { review: { notes: _notes, ...review }, narrative } = await loadSubmission();
+    const { review: { notes: _notes, commitments: read, ...review }, narrative, commitments } = await loadSubmission();
     const out = option('--out');
     if (!out) throw new Error('--out <page.html> is required');
-    await writeFile(out, renderPage({ ...review, narrative }));
+    // Preview: last week's commitments with the outcomes from the file, and the
+    // new proposals as they look before any decision (no buttons locally).
+    const outcomes = new Map((commitments?.results ?? []).map((r) => [r.id, r]));
+    const due = read?.due ? { ...read.due, scoredAt: commitments ? review.generatedAt : null,
+      items: read.due.items.map((c) => ({ ...c, ...(c.decision === 'accepted' && outcomes.get(c.id) ? outcomes.get(c.id) : {}) })) } : null;
+    const next = commitments?.next.length ? { items: commitments.next.map((c, i) => ({ id: `c${i + 1}`, ...c, decision: null })) } : null;
+    await writeFile(out, renderPage({ ...review, narrative }, { commitments: { due, next } }));
     console.log(`Wrote ${out}`);
     return;
   }

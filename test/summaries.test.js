@@ -284,7 +284,7 @@ test('summaries: existing review routes and their CSP are unchanged', async () =
     sources: { macros: { status: 'disabled' }, workouts: { status: 'disabled' }, spending: { status: 'disabled' }, checklist: { status: 'disabled' }, planner: { status: 'disabled' } } });
   const review = await call(handler, { url: new URL(reviewUrl(config, '2026-11-02')).pathname + new URL(reviewUrl(config, '2026-11-02')).search });
   assert.equal(review.status, 200);
-  assert.equal(review.headers['Content-Security-Policy'], "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
+  assert.equal(review.headers['Content-Security-Policy'], "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
   assert.doesNotMatch(review.body, /summaries|Claude Code/);
   const archive = new URL(archiveUrl(config));
   assert.equal((await call(handler, { url: archive.pathname + archive.search })).status, 200);

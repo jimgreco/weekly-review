@@ -212,6 +212,7 @@ The cloud routine needs nothing new: it reads notes with the ingest token, which
 
 - **One app:** replace its `~/deploy/weekly-summary-<service>.yml` hash (then recreate that service with its recorded files) and its network secret in the cloud environment. Clearing the variable turns that app's endpoint off; the review then shows the app as unavailable.
 - **Ingest:** replace `INGEST_TOKEN_SHA256` in `weekly-review.env` and recreate the container.
+- **Commitments:** need no configuration. They are stored under `weekly-review-data/commitments/<monday>.json` (the week they are for), on the same volume as reviews and notes. To withdraw a week's proposals, delete its file; to stop the loop, remove steps 5 and `--commitments` from `routine/WEEKLY_REVIEW.md`.
 - **Notes:** write a new `~/.config/weekly-review/notes.token`, replace `NOTES_TOKEN_SHA256` in `weekly-review.env` and recreate the container with its recorded files. Removing the variable turns notes posting off; stored notes stay under `weekly-review-data/notes` until deleted. To stop the summary, also turn off the Desktop task.
 - **Summaries page:** remove an address from `SUMMARIES_ALLOWED_EMAILS` (ends its session at once) or clear either variable (page off), then recreate the container. Rotating `LINK_SECRET` signs everyone out but also breaks every emailed review link. To stop Google sign-in entirely, also delete the OAuth client in the Cloud Console.
 

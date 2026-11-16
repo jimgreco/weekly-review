@@ -98,3 +98,32 @@ export async function collectNotes(config, week, { fetchImpl = fetch } = {}) {
     return { notes: null, status: 'error', error: reason };
   }
 }
+
+// The commitments loop (src/commitments.js): the accepted commitments that
+// were for this week, so the routine can score them, and the follow-through
+// of the weeks before. Optional context, like notes: a failure gives
+// commitments = null and a reason, never a failed collect.
+export async function collectCommitments(config, week, { fetchImpl = fetch } = {}) {
+  if (!config.siteUrl || (!config.ingestToken && !config.authViaProxy)) return { commitments: null, status: 'disabled' };
+  try {
+    const response = await fetchImpl(`${config.siteUrl}/api/commitments?week=${encodeURIComponent(week.start)}`, {
+      headers: config.ingestToken ? { Authorization: `Bearer ${config.ingestToken}`, Accept: 'application/json' } : { Accept: 'application/json' },
+      redirect: 'error',
+      signal: AbortSignal.timeout(config.fetchTimeoutMs ?? 20000),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const body = await response.json();
+    if (body?.week !== week.start || !Array.isArray(body.history) || (body.due != null && !Array.isArray(body.due.items))) {
+      throw new Error('unexpected response shape');
+    }
+    const accepted = body.due ? body.due.items.filter((c) => c.decision === 'accepted').length : 0;
+    return {
+      commitments: { due: body.due ?? null, history: body.history },
+      status: body.due ? 'ok' : 'none',
+      summary: body.due ? `${accepted} accepted of ${body.due.items.length} proposed` : null,
+    };
+  } catch (error) {
+    const reason = error.name === 'TimeoutError' ? 'timed out' : error.message;
+    return { commitments: null, status: 'error', error: reason };
+  }
+}

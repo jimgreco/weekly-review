@@ -6,6 +6,7 @@ import { renderEmail } from './render.js';
 import { sendEmail } from './email.js';
 import { reviewUrl } from './links.js';
 import { addDays, weekRange } from './week.js';
+import { InvalidCommitments, validateCommitments } from './commitments.js';
 
 export const MAX_BODY_BYTES = 512 * 1024;
 const MAX_NARRATIVE_CHARS = 9000;
@@ -20,11 +21,11 @@ export function tokenMatches(expectedSha256, header) {
 
 class InvalidReview extends Error {}
 
-/** Returns a clean {review, send, resend}, or throws InvalidReview. */
+/** Returns a clean {review, commitments, send, resend}, or throws InvalidReview. */
 export function validateSubmission(body) {
   const fail = (msg) => { throw new InvalidReview(msg); };
   if (!body || typeof body !== 'object') fail('body must be a JSON object');
-  const { review, narrative = null, send = false, resend = false } = body;
+  const { review, narrative = null, commitments = null, send = false, resend = false } = body;
   if (!review || typeof review !== 'object') fail('review is required');
 
   let week;
@@ -53,6 +54,17 @@ export function validateSubmission(body) {
   if (typeof resend !== 'boolean') fail('resend must be true or false');
   if (resend && !send) fail('resend requires send');
 
+  // Optional: scores for this week's commitments and proposals for next week's.
+  let cleanCommitments = null;
+  if (commitments != null) {
+    try {
+      cleanCommitments = validateCommitments(commitments);
+    } catch (error) {
+      if (error instanceof InvalidCommitments) fail(error.message);
+      throw error;
+    }
+  }
+
   return {
     review: {
       week: { start: week.start, end: week.end },
@@ -60,6 +72,7 @@ export function validateSubmission(body) {
       sources: Object.fromEntries(APPS.map((app) => [app, sources[app]])),
       narrative: cleanNarrative,
     },
+    commitments: cleanCommitments,
     send,
     resend,
   };
@@ -70,15 +83,24 @@ export function validateSubmission(body) {
  * email it — at most once per week, whatever the routine retries. An explicit
  * `resend` emails again (a deliberate, owner-requested repeat).
  */
-export function createPublisher(config, store, { sendImpl = sendEmail } = {}) {
+export function createPublisher(config, store, { sendImpl = sendEmail, commitments: commitmentsStore = null } = {}) {
   let queue = Promise.resolve(); // one publish at a time, so two retries can't both send
-  const publish = async ({ review, send, resend = false }) => {
+  const publish = async ({ review, commitments = null, send, resend = false }) => {
     const existing = await store.load(review.week.start);
     review.receivedAt = new Date().toISOString();
     review.sentAt = existing?.sentAt ?? null;
     await store.save(review);
 
-    const result = (sent) => ({ week: review.week.start, sentAt: review.sentAt, sent });
+    // Commitments live in their own files (src/commitments.js): score the ones
+    // that were for this week, then propose the ones for the week after.
+    let commitmentsResult;
+    if (commitments && commitmentsStore) {
+      const { scored, ignored } = await commitmentsStore.score(review.week.start, commitments.results);
+      const proposed = await commitmentsStore.propose(addDays(review.week.start, 7), commitments.next);
+      commitmentsResult = { scored, ignored, proposed: proposed?.items.length ?? 0 };
+    }
+
+    const result = (sent) => ({ week: review.week.start, sentAt: review.sentAt, sent, ...(commitmentsResult ? { commitments: commitmentsResult } : {}) });
     if (!send || (review.sentAt && !resend)) return result(false);
     if (!config.resendApiKey || !config.reviewEmail) {
       const error = new Error('email is not configured on the review site');
@@ -89,7 +111,7 @@ export function createPublisher(config, store, { sendImpl = sendEmail } = {}) {
       apiKey: config.resendApiKey,
       from: config.emailFrom,
       to: config.reviewEmail,
-      ...renderEmail(review, reviewUrl(config, review.week.start)),
+      ...renderEmail(review, reviewUrl(config, review.week.start), { hasCommitments: Boolean(commitmentsResult?.proposed) }),
       // A resend needs its own key, or Resend would treat it as the first send.
       idempotencyKey: resend ? `weekly-review-${review.week.start}-resend-${review.receivedAt}` : `weekly-review-${review.week.start}`,
     });
