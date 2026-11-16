@@ -270,3 +270,53 @@ ${narrative ? `<div style="background:#fff;border-left:4px solid #2f6f5e;border-
     .filter((l, i, a) => !(l === '' && a[i - 1] === '')).join('\n');
   return { subject: `Your week: ${weekLabel(review.week)}`, html, text };
 }
+
+// ---- Claude Code summaries (Google sign-in protected, /summaries) ----
+
+const SUMMARY_CSS = `${CSS}
+.nav{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;font-size:14px;margin:8px 0}
+.signout{display:flex;justify-content:center;align-items:center;gap:8px;flex-wrap:wrap}
+.signout button{font:inherit;font-size:13px;color:var(--muted);background:none;border:1px solid var(--line);border-radius:6px;padding:2px 10px;cursor:pointer}
+.gsi{display:flex;justify-content:center;min-height:44px;margin-top:12px}`;
+
+const shell = (title, body) => `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">
+<title>${esc(title)}</title><style>${SUMMARY_CSS}</style></head><body><main>
+${body}
+</main></body></html>`;
+
+const signOut = (email) => `<footer><form class="signout" method="post" action="/summaries/logout"><span>${esc(email)}</span><button type="submit">Sign out</button></form></footer>`;
+
+export function renderSummariesLogin({ clientId, loginUri }) {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">
+<title>Claude Code summaries</title><style>${SUMMARY_CSS}</style>
+<script src="https://accounts.google.com/gsi/client" async></script></head><body><main>
+<header><h1>Claude Code summaries</h1><p>Sign in to read them.</p></header>
+<section>
+<div id="g_id_onload" data-client_id="${esc(clientId)}" data-login_uri="${esc(loginUri)}" data-ux_mode="popup" data-auto_prompt="false" data-itp_support="true"></div>
+<div class="gsi"><div class="g_id_signin" data-type="standard" data-theme="outline" data-size="large" data-text="signin_with" data-shape="pill"></div></div>
+</section>
+</main></body></html>`;
+}
+
+export function renderSummariesDenied() {
+  return shell('Not allowed', `<header><h1>Not allowed</h1></header><section><p>This account can't view summaries.</p><p><a href="/summaries/login">Try another account</a></p></section>`);
+}
+
+export function renderSummariesList(entries, { email } = {}) {
+  const rows = entries.map((e) => `<li><a href="${esc(e.href)}">Week of ${esc(e.label)}</a></li>`).join('');
+  return shell('Claude Code summaries', `<header><h1>Claude Code summaries</h1><p>What you built each week</p></header>
+<section>${rows ? `<ul class="list">${rows}</ul>` : '<p class="muted">No summaries yet.</p>'}</section>
+${signOut(email)}`);
+}
+
+export function renderSummary({ week, note, newer, older, email }) {
+  const generated = new Date(note.generatedAt).toLocaleString('en-US', { timeZone: 'America/New_York', dateStyle: 'medium', timeStyle: 'short' });
+  const nav = `<nav class="nav"><span>${older ? `<a href="${esc(older.href)}">← ${esc(older.label)}</a>` : ''}</span><a href="/summaries">All weeks</a><span>${newer ? `<a href="${esc(newer.href)}">${esc(newer.label)} →</a>` : ''}</span></nav>`;
+  return shell(`Claude Code · ${weekLabel(week)}`, `<header><h1>Week of ${esc(weekLabel(week))}</h1><p>Claude Code summary · generated ${esc(generated)}</p></header>
+${nav}
+<div class="narrative">${paragraphs(note.text)}</div>
+${nav}
+${signOut(email)}`);
+}

@@ -184,11 +184,36 @@ The Mac summarises the week's Claude Code sessions and posts only the summary (`
 
 The cloud routine needs nothing new: it reads notes with the ingest token, which is already its network secret for the site.
 
+## 5. Summaries page (Google sign-in, optional)
+
+`https://review.jim-greco.com/summaries` shows the stored Claude Code summaries to allow-listed Google accounts. It needs a public OAuth client ID and an allow-list; no new secret (the cookie key is derived from `LINK_SECRET`). The site must already run a build that has the `/summaries` routes; until both values are set they are a 404.
+
+1. **OAuth consent screen** (Google Cloud Console, any project you own, e.g. a new one named "Weekly Review"): APIs & Services → OAuth consent screen (in the newer console: Google Auth Platform → Branding / Audience).
+   - User type **External**.
+   - App name **Weekly Review**; user support email and developer contact `jgreco@gmail.com`.
+   - Scopes: none to add (sign-in only uses `openid`, `email`, `profile`).
+   - Publishing status **Testing**, with test user `jgreco@gmail.com`. That's enough: no verification is needed for these scopes, and only test users can sign in.
+2. **Client ID:** APIs & Services → Credentials → Create credentials → OAuth client ID.
+   - Application type **Web application**, name "Weekly Review summaries".
+   - Authorized JavaScript origins: `https://review.jim-greco.com`.
+   - Authorized redirect URIs: `https://review.jim-greco.com/summaries/auth`.
+   - Create, and copy the **Client ID** (`….apps.googleusercontent.com`). The client secret isn't used; don't put it anywhere.
+3. **Site:** over the pinned SSH connection, under `~/deploy/.app-release.lock`, add to `~/deploy/weekly-review.env` (mode 600):
+
+   ```
+   GOOGLE_CLIENT_ID=<the client ID>
+   SUMMARIES_ALLOWED_EMAILS=jgreco@gmail.com
+   ```
+
+   Then recreate `weekly-review` straight away with the running container's recorded Compose chain, exactly as in §4 step 2 (`docker-compose -f <each recorded file> --profile weekly-review up -d --no-deps weekly-review`), so the next release's drift check doesn't refuse.
+4. **Check:** open `https://review.jim-greco.com/summaries` on the phone and on the Mac. It redirects to the sign-in page; sign in with `jgreco@gmail.com` and the list of weeks appears. Another Google account gets "This account can't view summaries." Sign out clears the session.
+
 ## Rotating or revoking
 
 - **One app:** replace its `~/deploy/weekly-summary-<service>.yml` hash (then recreate that service with its recorded files) and its network secret in the cloud environment. Clearing the variable turns that app's endpoint off; the review then shows the app as unavailable.
 - **Ingest:** replace `INGEST_TOKEN_SHA256` in `weekly-review.env` and recreate the container.
 - **Notes:** write a new `~/.config/weekly-review/notes.token`, replace `NOTES_TOKEN_SHA256` in `weekly-review.env` and recreate the container with its recorded files. Removing the variable turns notes posting off; stored notes stay under `weekly-review-data/notes` until deleted. To stop the summary, also turn off the Desktop task.
+- **Summaries page:** remove an address from `SUMMARIES_ALLOWED_EMAILS` (ends its session at once) or clear either variable (page off), then recreate the container. Rotating `LINK_SECRET` signs everyone out but also breaks every emailed review link. To stop Google sign-in entirely, also delete the OAuth client in the Cloud Console.
 
 ## Rollback
 

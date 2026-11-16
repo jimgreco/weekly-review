@@ -6,6 +6,7 @@ import { renderPage, renderArchive, weekLabel } from './render.js';
 import { weekRange } from './week.js';
 import { MAX_BODY_BYTES, InvalidReview, createPublisher, tokenMatches, validateSubmission } from './ingest.js';
 import { createNotesStore, noteWeek, validateNote } from './notes.js';
+import { createSummaries } from './summaries.js';
 
 const MAX_NOTE_BODY_BYTES = 64 * 1024;
 
@@ -44,10 +45,14 @@ async function readJson(req, maxBytes = MAX_BODY_BYTES) {
 export function createHandler(config, store, {
   publish = createPublisher(config, store),
   notes = createNotesStore(config.dataDir || './data'),
+  summaries = createSummaries(config, notes),
 } = {}) {
   return async (req, res) => {
     try {
       const url = new URL(req.url, 'http://localhost');
+
+      // Claude Code summaries behind Google sign-in; their own headers and CSP.
+      if (url.pathname === '/summaries' || url.pathname.startsWith('/summaries/')) return await summaries(req, res, url);
 
       // Owner notes from the Mac. Its own token, so the Mac never holds the
       // ingest token and the cloud routine can't write notes. Same 404 rules.
@@ -119,6 +124,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const config = loadConfig();
   if (!config.linkSecret) throw new Error('Missing required environment variable LINK_SECRET');
   if (!config.ingestTokenSha256) console.warn('[http] INGEST_TOKEN_SHA256 is unset; the routine cannot post reviews');
+  if (!config.googleClientId || !config.summariesAllowedEmails.length) console.log('[http] GOOGLE_CLIENT_ID or SUMMARIES_ALLOWED_EMAILS is unset; /summaries is off');
   const store = createStore(config.dataDir);
   http.createServer(createHandler(config, store)).listen(config.port, () => {
     console.log(`[http] listening on ${config.port}`);

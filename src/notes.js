@@ -1,8 +1,9 @@
 // Owner-only notes for a week, posted from the owner's Mac (today only the
 // Claude Code "what you built" summary). The cloud routine reads them as extra
 // narrative context. They are never shown on the review page and never copied
-// into the stored review.
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+// into the stored review; the owner reads them on the Google sign-in protected
+// /summaries pages (src/summaries.js).
+import { access, mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { InvalidReview } from './ingest.js';
 import { weekRange } from './week.js';
@@ -54,6 +55,25 @@ export function createNotesStore(dataDir) {
         if (error.code === 'ENOENT') return null;
         throw error;
       }
+    },
+    /** Mondays that have a note of this kind, newest first. */
+    async listWeeks(kind) {
+      let dirs;
+      try {
+        dirs = await readdir(root);
+      } catch (error) {
+        if (error.code === 'ENOENT') return [];
+        throw error;
+      }
+      const weeks = [];
+      for (const week of dirs) {
+        try {
+          if (noteWeek(week) !== week) continue;
+          await access(file(week, kind));
+          weeks.push(week);
+        } catch { /* not a Monday, or no note of this kind */ }
+      }
+      return weeks.sort().reverse();
     },
     async loadAll(week) {
       const entries = await Promise.all(NOTE_KINDS.map(async (kind) => [kind, await this.load(week, kind)]));

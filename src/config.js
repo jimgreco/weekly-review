@@ -27,6 +27,9 @@ export function loadConfig(env = process.env) {
     // Hex SHA-256 of the notes token on the owner's Mac. Unset = notes PUT disabled.
     notesTokenSha256: (env.NOTES_TOKEN_SHA256 || '').toLowerCase() || null,
     resendApiKey: env.RESEND_API_KEY || null,
+    // Google sign-in for /summaries. Both unset (or either) = the pages are a 404.
+    googleClientId: (env.GOOGLE_CLIENT_ID || '').trim() || null,
+    summariesAllowedEmails: (env.SUMMARIES_ALLOWED_EMAILS || '').split(',').map((e) => e.trim().toLowerCase()).filter(Boolean),
     emailFrom: env.REVIEW_EMAIL_FROM || 'Weekly Review <review@weekofus.com>',
 
     // Routine side.
