@@ -71,3 +71,18 @@ Where the app has a read path (`store.read()`, a plain `SELECT`), use it.
 
 - The two variables are added to the app's production environment by the owner. Until then the route is a 404, so shipping the code is inert.
 - Generate the token with `openssl rand -base64 32 | tr -d '=+/' | cut -c1-40`. Set `WEEKLY_SUMMARY_TOKEN_SHA256=$(printf %s "$TOKEN" | shasum -a 256 | cut -d' ' -f1)` in the app, and store `$TOKEN` only in the routine's environment.
+
+## Check-in evidence (Macrovana and Rep, Mix, Burn only)
+
+```
+GET /api/checkin-evidence?start=YYYY-MM-DD&end=YYYY-MM-DD
+Authorization: Bearer <the same weekly-summary token>
+```
+
+The detailed companion used by the Saturday check-in routine (`routine/CHECKIN.md`, `node src/cli.js evidence`). It deliberately accepts the **same token and env vars** as `weekly-summary` (`WEEKLY_SUMMARY_TOKEN_SHA256`, `WEEKLY_SUMMARY_EMAIL`), with the same 404 rules, constant-time check and rate limiter, so the cloud environment's existing network secret for each host covers it. The token opens these two read-only routes and nothing else.
+
+- `start` <= `end`, 1–31 calendar days inclusive; otherwise `400`. Longer ranges are split by the caller.
+- Read-only, like `weekly-summary`. Unknown user: `data = {"status": "no-account"}`.
+- Response: `{version: 1, app, range: {start, end}, timezone, generatedAt, data}` with `Cache-Control: no-store`.
+- **macros** `data`: `entries` (per food entry with macros, `consumed_at`, `localDate`, meal), `nutritionDays` (`complete`/`partial`; a missing day is unknown), `macroTargets` and `weightTargets` (full history up to `end`), `weights`, `waists`, `checkins` (notes), `photos` (metadata only, never keys or URLs), `sleep` (Apple Health and manual only: `localDate`, `logged_at`, `durationHours`, `wakeUps`, `source`). Never reads `oura_documents`; rows whose provenance mentions Oura are excluded. More than 5,000 rows of a kind is `500 {"error":"too-many-rows"}`: request a shorter range.
+- **workouts** `data`: `logs` (each with its day in the user's timezone by `startTime`, `status`, `notes`, `exerciseItems` with setup profile and raw sets, and the immutable historical `prescription`) and `programs` (schedule and phases). Only projected fields; raw entered loads, side reps and null RIR are kept as stored; no computed totals or 1RM. Deleted and imported/provider logs are excluded.
