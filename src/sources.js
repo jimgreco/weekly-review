@@ -73,3 +73,28 @@ export async function collectHistory(config, week, weeks, { fetchImpl = fetch } 
   }
   return { weeks: starts, sources };
 }
+
+// Owner notes the Mac posted for this week (GET /api/notes, ingest token or the
+// proxy). Optional context: a failure, or no site configured, gives
+// notes = null and a reason, never a failed collect.
+export async function collectNotes(config, week, { fetchImpl = fetch } = {}) {
+  if (!config.siteUrl || (!config.ingestToken && !config.authViaProxy)) return { notes: null, status: 'disabled' };
+  try {
+    const response = await fetchImpl(`${config.siteUrl}/api/notes?week=${encodeURIComponent(week.start)}`, {
+      headers: config.ingestToken ? { Authorization: `Bearer ${config.ingestToken}`, Accept: 'application/json' } : { Accept: 'application/json' },
+      redirect: 'error',
+      signal: AbortSignal.timeout(config.fetchTimeoutMs ?? 20000),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const body = await response.json();
+    if (body?.week !== week.start || !body.notes || typeof body.notes !== 'object') throw new Error('unexpected response shape');
+    const note = body.notes['claude-code'];
+    const claudeCode = note && typeof note.text === 'string' && note.text.trim()
+      ? { text: note.text, generatedAt: typeof note.generatedAt === 'string' ? note.generatedAt : null }
+      : null;
+    return { notes: { claudeCode }, status: claudeCode ? 'ok' : 'none' };
+  } catch (error) {
+    const reason = error.name === 'TimeoutError' ? 'timed out' : error.message;
+    return { notes: null, status: 'error', error: reason };
+  }
+}

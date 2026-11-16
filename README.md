@@ -16,7 +16,14 @@ Every Sunday evening, a Claude Code cloud routine does three things:
           │ GET /api/weekly-summary?week=<monday>  (one read-only token per app)
           ▼
  Macrovana · Rep, Mix, Burn · Spending · Ritual Cue · Week of Us
+
+ owner's Mac (Sunday ~17:30, Claude Desktop task)
+   digest of the week's Claude Code transcripts ──► Claude writes a short summary
+   cli.js post-notes ── PUT /api/notes/claude-code (notes token) ──► review site
+   (the cloud routine's collect reads it back with GET /api/notes)
 ```
+
+The Mac step adds a `## Beyond the apps` section: what the owner built in Claude Code that week, and the important decisions and plans made in those sessions. Transcripts never leave the Mac; only the summary is posted. It's optional: without it the review just skips that section.
 
 | Source | What the endpoint returns |
 |---|---|
@@ -37,11 +44,15 @@ Each source fails on its own. A broken, slow or unconfigured app shows a short n
   - `collect` writes the review JSON;
   - `publish` posts it with the narrative (`--send` emails once per week; `--resend` deliberately emails again);
   - `render` previews the page locally;
-  - `link` prints a week's private link on the site.
+  - `link` prints a week's private link on the site;
+  - `post-notes` (on the owner's Mac) stores the week's Claude Code summary on the site.
 - `routine/WEEKLY_REVIEW.md` holds the routine's steps and the narrative rules. The routine's prompt just points at it.
+- `routine/CLAUDE_CODE_SUMMARY.md` holds the Mac task's steps and summary rules; `scripts/claude-code-digest.mjs` builds the local digest it summarises (typed messages and final replies only, secrets redacted, capped at ~60k chars; never tool inputs or outputs).
 - `src/server.js` is the review site:
   - `POST /api/reviews` takes the ingest token, validates the review and stores it. It emails at most once per week, even if two posts race.
   - `GET /r/<monday>?t=…` and `GET /archive?t=…` serve HMAC-signed private pages.
+  - `PUT /api/notes/claude-code?week=<monday>` takes the notes token (`NOTES_TOKEN_SHA256`) and stores the Mac's summary as `DATA_DIR/notes/<monday>/claude-code.json`, replacing any earlier one. `GET /api/notes?week=<monday>` returns it to the routine with the ingest token. Notes are never shown on the review page or copied into the stored review.
+  - `/summaries` (`src/summaries.js`, `src/google.js`) lets the owner read the stored Claude Code summaries behind Google sign-in. `GET /summaries/login` shows the Google Identity Services button; `POST /summaries/auth` checks the GIS double-submit CSRF token and verifies the ID token locally (RS256 against Google's cached JWKS; issuer, audience = `GOOGLE_CLIENT_ID`, expiry, `email_verified`, and the email on `SUMMARIES_ALLOWED_EMAILS`), then sets a 30-day `__Host-wr_summaries` cookie (HMAC with a key derived from `LINK_SECRET`; `HttpOnly; Secure; SameSite=Lax`). `GET /summaries` lists weeks with a summary, newest first; `GET /summaries/<monday>` shows one with links to the next older and newer. `POST /summaries/logout` needs a same-origin `Origin`. Unset `GOOGLE_CLIENT_ID` or allow-list = every `/summaries` route is a 404.
   - `GET /health`.
 
 The site has no database access and no Claude key. The cloud routine has no database access either, and holds no tokens: they are network secrets on its cloud environment, added to requests by the agent proxy outside the session.
@@ -74,4 +85,6 @@ There are no dependencies to install. Each app's endpoint is tested in its own r
 
 ## Links and privacy
 
-Page links carry an HMAC token. There's no login, so anyone holding the link from the email can open that week's page. Pages send `Referrer-Policy: no-referrer`, `noindex` and `no-store`. Rotating `LINK_SECRET` invalidates every link. Reviews are stored as JSON files (mode 600) under `DATA_DIR/reviews`. The `publish` response never includes the private link, so it stays out of the routine's transcript.
+Page links carry an HMAC token. There's no login, so anyone holding the link from the email can open that week's page. Pages send `Referrer-Policy: no-referrer`, `noindex` and `no-store`. Rotating `LINK_SECRET` invalidates every link. Reviews are stored as JSON files (mode 600) under `DATA_DIR/reviews`, and Mac notes under `DATA_DIR/notes` (files 600, folders 700). The `publish` response never includes the private link, so it stays out of the routine's transcript.
+
+The `/summaries` pages are the only ones with a login. They send `no-store`, `X-Robots-Tag: noindex`, `X-Frame-Options: DENY` and a CSP with `frame-ancestors 'none'`. Only the login page's CSP allows `https://accounts.google.com/gsi/` (script, frame, connect, style), and it sends `Referrer-Policy: strict-origin` because GIS checks the page origin; the other summaries pages send `no-referrer`. Removing an address from `SUMMARIES_ALLOWED_EMAILS` ends its session; rotating `LINK_SECRET` ends every session (and every review link). Failed sign-ins show only "This account can't view summaries." and log a short reason, never the token.
