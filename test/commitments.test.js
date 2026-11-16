@@ -247,7 +247,7 @@ test('commitments: text is escaped and a bad record costs only its own section',
   const html = renderPage(base, { decideHref: '/r/x/commitments?t="><script>',
     commitments: { next: { items: [{ id: 'c1', text: '<img src=x>', measure: '"q"', area: 'nope', decision: null }] } } });
   assert.match(html, /&lt;img src=x&gt;/);
-  assert.doesNotMatch(html, /<img src=x>|<script>/);
+  assert.ok(!html.includes('<img src=x>') && !html.toLowerCase().includes('<script'), 'no markup from the data or the href');
   assert.match(html, /Other<\/span>/);
   const broken = renderPage(base, { commitments: { due: { items: [{ decision: 'accepted' }, null] } } });
   assert.match(broken, /Nutrition &amp; recovery/);
