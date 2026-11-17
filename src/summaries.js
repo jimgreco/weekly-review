@@ -114,7 +114,7 @@ export function createSummaries(config, notes, { fetchImpl = fetch, now = Date.n
 
     if (path === '/summaries/login') {
       if (req.method !== 'GET') return reply(res, 405, 'Method not allowed');
-      if (session) return redirect(res, '/summaries');
+      if (session) return redirect(res, '/home');
       // GIS needs the page origin in the Referer to check the client's
       // authorized origins, so this page sends the origin only (no path).
       return reply(res, 200, renderSummariesLogin({ clientId: config.googleClientId, loginUri: `${config.publicUrl}/summaries/auth` }),
@@ -134,12 +134,15 @@ export function createSummaries(config, notes, { fetchImpl = fetch, now = Date.n
         throw error;
       }
       if (!allowed.includes(claims.email.toLowerCase())) return denied(res, 'email not allowed');
-      return redirect(res, '/summaries', { 'Set-Cookie': cookie(signSession(key, claims.email.toLowerCase(), now()), SESSION_DAYS * 86400) });
+      return redirect(res, '/home', { 'Set-Cookie': cookie(signSession(key, claims.email.toLowerCase(), now()), SESSION_DAYS * 86400) });
     }
 
     if (path === '/summaries/logout') {
       if (req.method !== 'POST') return reply(res, 405, 'Method not allowed');
-      if (!origin || req.headers.origin !== origin) return reply(res, 403, 'Forbidden', { headers: { 'Content-Type': 'text/plain' } });
+      // The session cookie is SameSite=Lax, so another site's form can't carry
+      // it. Pages with Referrer-Policy: no-referrer post with Origin "null".
+      const from = req.headers.origin;
+      if (from && from !== 'null' && from !== origin) return reply(res, 403, 'Forbidden', { headers: { 'Content-Type': 'text/plain' } });
       return redirect(res, '/summaries/login', { 'Set-Cookie': cookie('', 0) });
     }
 

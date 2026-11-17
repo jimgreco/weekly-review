@@ -11,6 +11,7 @@ import { addDays, weekRange } from './week.js';
 import { MAX_BODY_BYTES, InvalidReview, createPublisher, tokenMatches, validateSubmission } from './ingest.js';
 import { createNotesStore, noteWeek, validateNote } from './notes.js';
 import { createSummaries } from './summaries.js';
+import { createHome } from './home.js';
 import { CommitmentConflict, createCommitmentsStore, forRoutine } from './commitments.js';
 
 const MAX_NOTE_BODY_BYTES = 64 * 1024;
@@ -70,7 +71,9 @@ export function createHandler(config, store, {
   decisions = createDecisionsStore(config.dataDir || './data'),
   context = createContextStore(config.dataDir || './data'),
   sendImpl = sendEmail,
+  now = Date.now,
 } = {}) {
+  const home = createHome(config, { store, commitments, posts, decisions, notes }, { now });
   // Where a post's email button and page link lead: a pulse points at the
   // review that proposed the week's commitments; the others at their own page.
   const pulseReview = (post) => reviewUrl(config, addDays(post.key, -7));
@@ -90,6 +93,9 @@ export function createHandler(config, store, {
 
       // Claude Code summaries behind Google sign-in; their own headers and CSP.
       if (url.pathname === '/summaries' || url.pathname.startsWith('/summaries/')) return await summaries(req, res, url);
+      // The owner's home page and decision register, behind the same sign-in.
+      if (url.pathname === '/home' || url.pathname.startsWith('/home/') || url.pathname === '/decisions' || url.pathname.startsWith('/decisions/')) return await home(req, res, url);
+      if (url.pathname === '/' && req.method === 'GET') { res.writeHead(303, { Location: '/home', ...SECURITY_HEADERS }); return res.end(); }
 
       // Owner notes from the Mac. Its own token, so the Mac never holds the
       // ingest token and the cloud routine can't write notes. Same 404 rules.

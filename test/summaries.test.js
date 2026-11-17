@@ -79,7 +79,7 @@ test('summaries: a valid Google token sets the session cookie and opens /summari
   await notes.save('2026-11-02', 'claude-code', { text: '- Built the <script> page', generatedAt: '2026-11-08T22:30:00Z' });
   const res = await signIn(handler, jwt());
   assert.equal(res.status, 303);
-  assert.equal(res.headers.Location, '/summaries');
+  assert.equal(res.headers.Location, '/home');
   const set = res.headers['Set-Cookie'];
   assert.match(set, /^__Host-wr_summaries=[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+; Max-Age=2592000; Path=\/; HttpOnly; Secure; SameSite=Lax$/);
   const payload = JSON.parse(Buffer.from(sessionCookie(res).split('.')[0], 'base64url').toString());
@@ -221,16 +221,20 @@ test('summaries: login page loads GIS with its own CSP; signed-in users skip it'
   assert.equal(res.headers['Cache-Control'], 'no-store');
   const signedIn = await call(handler, { url: '/summaries/login', headers: withSession(signSession(sessionKey(config.linkSecret), 'owner@example.com', NOW)) });
   assert.equal(signedIn.status, 303);
-  assert.equal(signedIn.headers.Location, '/summaries');
+  assert.equal(signedIn.headers.Location, '/home');
 });
 
-test('summaries: logout needs the same Origin and clears the cookie', async () => {
+test('summaries: logout refuses another site\'s Origin and clears the cookie', async () => {
   const { handler, config } = await site();
   const headers = withSession(signSession(sessionKey(config.linkSecret), 'owner@example.com', NOW));
-  for (const origin of [undefined, 'https://evil.example', 'null', 'http://review.example']) {
-    const res = await call(handler, { method: 'POST', url: '/summaries/logout', headers: { ...headers, ...(origin ? { origin } : {}) } });
+  for (const origin of ['https://evil.example', 'http://review.example']) {
+    const res = await call(handler, { method: 'POST', url: '/summaries/logout', headers: { ...headers, origin } });
     assert.equal(res.status, 403, String(origin));
     assert.equal(res.headers['Set-Cookie'], undefined);
+  }
+  // Browsers send Origin "null" from a no-referrer page; SameSite=Lax keeps other sites out.
+  for (const origin of [undefined, 'null']) {
+    assert.equal((await call(handler, { method: 'POST', url: '/summaries/logout', headers: { ...headers, ...(origin ? { origin } : {}) } })).status, 303, String(origin));
   }
   const res = await call(handler, { method: 'POST', url: '/summaries/logout', headers: { ...headers, origin: ORIGIN } });
   assert.equal(res.status, 303);
