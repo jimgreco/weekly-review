@@ -7,6 +7,7 @@ import { sendEmail } from './email.js';
 import { reviewUrl } from './links.js';
 import { addDays, weekRange } from './week.js';
 import { InvalidCommitments, validateCommitments } from './commitments.js';
+import { journalCountsOnly } from './sources.js';
 
 export const MAX_BODY_BYTES = 512 * 1024;
 const MAX_NARRATIVE_CHARS = 9000;
@@ -35,7 +36,10 @@ export function validateSubmission(body) {
 
   const sources = review.sources;
   if (!sources || typeof sources !== 'object') fail('review.sources is required');
+  // The journal joined later, so a submission without it is still valid.
+  const OPTIONAL = new Set(['journal']);
   for (const app of APPS) {
+    if (OPTIONAL.has(app) && sources[app] === undefined) continue;
     if (typeof sources[app]?.status !== 'string') fail(`review.sources.${app}.status is required`);
   }
   const unknown = Object.keys(sources).filter((k) => !APPS.includes(k));
@@ -69,7 +73,9 @@ export function validateSubmission(body) {
     review: {
       week: { start: week.start, end: week.end },
       generatedAt: new Date(review.generatedAt).toISOString(),
-      sources: Object.fromEntries(APPS.map((app) => [app, sources[app]])),
+      // Never store journal text, even if a client sends it.
+      sources: Object.fromEntries(APPS.filter((app) => sources[app] !== undefined)
+        .map((app) => [app, app === 'journal' ? journalCountsOnly(sources[app]) : sources[app]])),
       narrative: cleanNarrative,
     },
     commitments: cleanCommitments,
