@@ -191,7 +191,7 @@ test('commitments: accept and decline from the review page with the link token',
   assert.match(html, /Commitments for the coming week/);
   assert.ok(html.includes(`action="/r/${WEEK.start}/commitments?t=${t}"`));
   assert.equal(html.match(/>Accept</g).length, 3);
-  assert.doesNotMatch(html, /Last week's commitments/);
+  assert.doesNotMatch(html, /Last week(&#39;|')s commitments/);
 
   const ok = await post('id=c1&decision=accept', { origin: 'null' });
   assert.equal(ok.status, 303);
@@ -232,7 +232,7 @@ test('commitments: accept and decline from the review page with the link token',
 
   await store.save(review(NEXT));
   html = (await call(handler, { url: `/r/${NEXT}?t=${sign(SECRET, `review:${NEXT}`)}` })).body;
-  assert.match(html, /Last week's commitments/);
+  assert.match(html, /Last week(&#39;|')s commitments/);
   assert.match(html, /1\/2/);
   assert.match(html, /6 of 7 days &lt;ok&gt;/);
   assert.match(html, /class="badge miss">Missed/);

@@ -161,23 +161,24 @@ function commitmentBody(c) {
 }
 
 // Last week's accepted commitments with how they went (scored by this review).
-function commitmentsDue(record) {
+function commitmentsDue(record, { title = "Last week's commitments" } = {}) {
   const accepted = record.items.filter((c) => c.decision === 'accepted');
   const hit = accepted.filter((c) => c.outcome === 'hit').length;
   const rows = accepted.map((c) => `
     <li class="commit"><div class="c-main">${commitmentBody(c)}
       ${c.note ? `<div class="c-sub">${esc(c.note)}</div>` : ''}</div>
       <span class="badge ${esc(c.outcome ?? 'pending')}">${esc(OUTCOME_LABEL[c.outcome] ?? 'Not scored yet')}</span></li>`).join('');
-  return `<section id="scorecard"><h2>Last week's commitments</h2>
+  return `<section id="scorecard"><h2>${esc(title)}</h2>
     ${record.scoredAt ? `<div class="stats">${stat('Kept', `${hit}/${accepted.length}`, 'accepted commitments hit')}</div>` : ''}
     <ul class="list">${rows}</ul></section>`;
 }
 
 // The commitments this review proposes for the coming week. With decideHref
 // each one gets Accept / Decline buttons (plain form posts, no script).
-function commitmentsNext(record, decideHref) {
+function commitmentsNext(record, decideHref, { title = 'Commitments for the coming week', id = 'commitments', hidden = {}, when = 'Next' } = {}) {
   const open = decideHref && !record.scoredAt;
-  const button = (c, decision, label, cls = '') => `<form method="post" action="${esc(decideHref)}"><input type="hidden" name="id" value="${esc(c.id)}"><input type="hidden" name="decision" value="${decision}"><button type="submit"${cls ? ` class="${cls}"` : ''}>${label}</button></form>`;
+  const extra = Object.entries(hidden).map(([k, v]) => `<input type="hidden" name="${esc(k)}" value="${esc(v)}">`).join('');
+  const button = (c, decision, label, cls = '') => `<form method="post" action="${esc(decideHref)}">${extra}<input type="hidden" name="id" value="${esc(c.id)}"><input type="hidden" name="decision" value="${decision}"><button type="submit"${cls ? ` class="${cls}"` : ''}>${label}</button></form>`;
   const rows = record.items.map((c) => {
     const state = c.decision === 'accepted' ? '<span class="badge hit">Accepted</span>'
       : c.decision === 'declined' ? '<span class="badge unknown">Declined</span>' : '';
@@ -191,9 +192,9 @@ function commitmentsNext(record, decideHref) {
   const accepted = record.items.filter((c) => c.decision === 'accepted').length;
   const hint = record.scoredAt ? 'This week has been scored.'
     : !decideHref ? ''
-      : accepted ? `${accepted} accepted. Next Sunday's review scores only the ones you accept.`
-        : "Accept the ones you'll commit to. Next Sunday's review scores only those.";
-  return `<section id="commitments"><h2>Commitments for the coming week</h2>
+      : accepted ? `${accepted} accepted. ${when} Sunday's review scores only the ones you accept.`
+        : `Accept the ones you'll commit to. ${when} Sunday's review scores only those.`;
+  return `<section id="${esc(id)}"><h2>${esc(title)}</h2>
     <ul class="list">${rows}</ul>${hint ? `<p class="note">${esc(hint)}</p>` : ''}</section>`;
 }
 
@@ -396,7 +397,107 @@ const SUMMARY_CSS = `${CSS}
 .nav{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;font-size:14px;margin:8px 0}
 .signout{display:flex;justify-content:center;align-items:center;gap:8px;flex-wrap:wrap}
 .signout button{font:inherit;font-size:13px;color:var(--muted);background:none;border:1px solid var(--line);border-radius:6px;padding:2px 10px;cursor:pointer}
-.gsi{display:flex;justify-content:center;min-height:44px;margin-top:12px}`;
+.gsi{display:flex;justify-content:center;min-height:44px;margin-top:12px}
+.top{display:flex;gap:16px;flex-wrap:wrap;font-size:14px;margin:12px 0 0}.top a[aria-current]{color:var(--ink);font-weight:600;text-decoration:none}
+.row{display:flex;gap:12px;justify-content:space-between;align-items:baseline;flex-wrap:wrap}.row .muted{font-size:13px}
+details{margin-top:8px}summary{cursor:pointer;color:var(--muted);font-size:14px}
+.field{display:block;margin:0 0 14px}.field span{display:block;font-size:13px;color:var(--muted);margin-bottom:4px}
+.field input,.field textarea,.field select{width:100%;font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.field textarea{min-height:96px;resize:vertical}.field small{display:block;color:var(--muted);font-size:12px;margin-top:3px}
+.actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.btn{display:inline-block;font:inherit;font-size:14px;min-height:36px;padding:6px 16px;border-radius:8px;border:1px solid var(--accent);background:var(--accent);color:var(--card);cursor:pointer;text-decoration:none}
+.error{background:var(--warn-bg);color:var(--warn);border-radius:8px;padding:8px 12px;font-size:14px;margin:0 0 14px}
+.d-q{color:var(--muted);font-size:14px;margin:2px 0 0}.d-out{font-size:14px;margin:4px 0 0}`;
+
+const topNav = (current) => `<nav class="top">${[['/home', 'Home'], ['/decisions', 'Decisions'], ['/summaries', 'Claude Code summaries']]
+  .map(([href, label]) => `<a href="${href}"${href === current ? ' aria-current="page"' : ''}>${label}</a>`).join('')}</nav>`;
+const shortDate = (iso) => new Date(`${iso}T12:00:00Z`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+const nextSunday = (monday) => new Date(Date.parse(`${monday}T12:00:00Z`) + 6 * 86400000).toISOString().slice(0, 10);
+
+/** The signed-in home page (src/home.js). */
+export function renderHome(d, { email, csrf }) {
+  const label = (record) => weekLabel({ start: record.week, end: nextSunday(record.week) });
+  const live = (record, title, id, when) => (record.scoredAt
+    ? commitmentsDue(record, { title }).replace('id="scorecard"', `id="${id}"`)
+    : commitmentsNext(record, '/home/commitments', { title, id, when, hidden: { week: record.week, csrf } }));
+  let commitments = '';
+  try {
+    if (d.nextWeek?.items?.length) commitments += live(d.nextWeek, `Next week's commitments · ${label(d.nextWeek)}`, 'commitments', 'Next');
+    if (d.thisWeek?.items?.length) commitments += live(d.thisWeek, `This week's commitments · ${label(d.thisWeek)}`, d.nextWeek?.items?.length ? 'this-week' : 'commitments', 'This');
+  } catch (error) {
+    console.error('[render] commitments have an unexpected shape:', error.message);
+  }
+  if (!commitments) commitments = '<section id="commitments"><h2>Commitments</h2><p class="muted">None yet. The next Sunday review proposes them, and you accept or decline them here.</p></section>';
+
+  const scored = d.history.filter((h) => h.scored && h.accepted);
+  const kept = scored.reduce((n, h) => n + h.hit, 0);
+  const accepted = scored.reduce((n, h) => n + h.accepted, 0);
+  const follow = d.history.length ? `<section><h2>Follow-through</h2>
+    ${scored.length ? `<div class="stats">${stat('Kept', `${kept}/${accepted}`, `over ${scored.length} scored week${scored.length === 1 ? '' : 's'}`)}</div>` : ''}
+    <ul class="list">${[...d.history].reverse().map((h) => `<li class="row"><span>${esc(h.label)}</span><span class="muted">${esc(
+    !h.accepted ? `${h.proposed} proposed, none accepted`
+      : !h.scored ? `${h.accepted} accepted, not scored yet`
+        : [`${h.hit} hit`, h.partial && `${h.partial} partly`, h.miss && `${h.miss} missed`, h.unknown && `${h.unknown} no data`].filter(Boolean).join(' · ') + ` of ${h.accepted}`)}</span></li>`).join('')}</ul></section>` : '';
+
+  const latest = [
+    d.reviews[0] && ['Weekly review', `Week of ${d.reviews[0].label}`, d.reviews[0].href],
+    d.checkins[0] && ['Nutrition & training check-in', d.checkins[0].subtitle, d.checkins[0].href],
+    d.pulses[0] && ['Midweek check', d.pulses[0].subtitle, d.pulses[0].href],
+    d.months[0] && ['Month', d.months[0].title, d.months[0].href],
+    d.summaries[0] && ['Claude Code summary', `Week of ${d.summaries[0].label}`, d.summaries[0].href],
+  ].filter(Boolean).map(([kind, name, href]) => `<li class="row"><a href="${esc(href)}">${esc(name)}</a><span class="muted">${esc(kind)}</span></li>`).join('');
+
+  const upcoming = d.upcoming.map((x) => `<li><div class="row"><span>${esc(x.title)}</span><span class="muted">${esc(shortDate(x.date))}</span></div>
+    <p class="d-q">${esc(x.question)}${x.briefHref ? ` · <a href="${esc(x.briefHref)}">Read the brief</a>` : ''}</p></li>`).join('');
+
+  const group = (title, entries, text) => (entries.length ? `<details${entries.length <= 6 ? ' open' : ''}><summary>${esc(title)} (${entries.length})</summary><ul class="list">${entries.map((e) => `<li><a href="${esc(e.href)}">${esc(text(e))}</a></li>`).join('')}</ul></details>` : '');
+  const archive = group('Weekly reviews', d.reviews, (e) => `Week of ${e.label}`)
+    + group('Nutrition & training check-ins', d.checkins, (e) => e.subtitle) + group('Months', d.months, (e) => e.title)
+    + group('Decision briefs', d.briefs, (e) => e.title) + group('Midweek checks', d.pulses, (e) => e.subtitle)
+    + group('Claude Code summaries', d.summaries, (e) => `Week of ${e.label}`);
+
+  return shell('Home', `<header><h1>Home</h1><p>${esc(shortDate(d.today))}</p>${topNav('/home')}</header>
+${commitments}
+${follow}
+<section><h2>Latest</h2>${latest ? `<ul class="list">${latest}</ul>` : '<p class="muted">Nothing yet.</p>'}</section>
+<section><h2>Decisions coming up</h2>${upcoming ? `<ul class="list">${upcoming}</ul>` : '<p class="muted">No open decisions ahead.</p>'}
+<p class="note"><a href="/decisions">All decisions${d.openDecisions ? ` (${d.openDecisions} open)` : ''}</a> · <a href="/decisions/new">Add one</a></p></section>
+<section><h2>Archive</h2>${archive || '<p class="muted">Nothing yet.</p>'}</section>
+${signOut(email)}`);
+}
+
+export function renderDecisions(list, { email, today }) {
+  const item = (x) => `<li><div class="row"><span>${esc(x.title)}${x.status === 'open' && x.date < today ? ' <span class="badge miss">Past its date</span>' : ''}${x.status === 'dropped' ? ' <span class="badge">Dropped</span>' : ''}</span><span class="muted">${esc(shortDate(x.date))}</span></div>
+    <p class="d-q">${esc(x.question)}</p>${x.outcome ? `<p class="d-out"><strong>Decided:</strong> ${esc(x.outcome)}</p>` : ''}
+    <p class="note">${x.briefHref ? `<a href="${esc(x.briefHref)}">Read the brief</a> · ` : ''}<a href="/decisions/${esc(x.id)}">${x.status === 'open' ? 'Edit or record the outcome' : 'Edit'}</a></p></li>`;
+  const open = list.filter((x) => x.status === 'open');
+  const closed = list.filter((x) => x.status !== 'open').reverse();
+  return shell('Decisions', `<header><h1>Decisions</h1><p>Each open one gets an evidence brief the Wednesday before its date.</p>${topNav('/decisions')}</header>
+<section><h2>Open</h2>${open.length ? `<ul class="list">${open.map(item).join('')}</ul>` : '<p class="muted">No open decisions.</p>'}
+<p style="margin:14px 0 0"><a class="btn" href="/decisions/new">Add a decision</a></p></section>
+${closed.length ? `<section><h2>Decided</h2><ul class="list">${closed.map(item).join('')}</ul></section>` : ''}
+${signOut(email)}`);
+}
+
+export function renderDecisionForm(entry, { email, csrf, isNew, error }) {
+  const v = entry ?? { status: 'open', options: [] };
+  const field = (label, control, hint = '') => `<label class="field"><span>${label}</span>${control}${hint ? `<small>${hint}</small>` : ''}</label>`;
+  const status = ['open', 'decided', 'dropped'].map((x) => `<option value="${x}"${v.status === x ? ' selected' : ''}>${x[0].toUpperCase()}${x.slice(1)}</option>`).join('');
+  return shell(isNew ? 'Add a decision' : 'Edit decision', `<header><h1>${isNew ? 'Add a decision' : 'Edit decision'}</h1>${topNav('')}</header>
+<section><form method="post" action="/decisions/${isNew ? 'new' : esc(v.id)}">
+<input type="hidden" name="csrf" value="${esc(csrf)}">
+${error ? `<p class="error">Not saved: ${esc(error)}</p>` : ''}
+${field('Title', `<input name="title" maxlength="120" required value="${esc(v.title)}">`)}
+${field('Date', `<input name="date" type="date" required value="${esc(v.date)}">`, 'The day you decide. The brief arrives the Wednesday before.')}
+${field('Question', `<textarea name="question" maxlength="400" required>${esc(v.question)}</textarea>`)}
+${field('Options', `<textarea name="options">${esc((v.options ?? []).join('\n'))}</textarea>`, 'One per line, up to six. Optional.')}
+${field('Context', `<textarea name="context" maxlength="2000" style="min-height:160px">${esc(v.context)}</textarea>`, 'The plan, targets and criteria the brief should judge against. Stays on this site.')}
+${field('Status', `<select name="status">${status}</select>`)}
+${field('Outcome', `<textarea name="outcome" maxlength="600">${esc(v.outcome)}</textarea>`, 'What you decided, once you have.')}
+<div class="actions"><button class="btn" type="submit">Save</button><a href="/decisions">Cancel</a></div>
+</form></section>
+${signOut(email)}`);
+}
 
 const shell = (title, body) => `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">
@@ -425,7 +526,7 @@ export function renderSummariesDenied() {
 
 export function renderSummariesList(entries, { email } = {}) {
   const rows = entries.map((e) => `<li><a href="${esc(e.href)}">Week of ${esc(e.label)}</a></li>`).join('');
-  return shell('Claude Code summaries', `<header><h1>Claude Code summaries</h1><p>What you built each week</p></header>
+  return shell('Claude Code summaries', `<header><h1>Claude Code summaries</h1><p>What you built each week</p>${topNav('/summaries')}</header>
 <section>${rows ? `<ul class="list">${rows}</ul>` : '<p class="muted">No summaries yet.</p>'}</section>
 ${signOut(email)}`);
 }

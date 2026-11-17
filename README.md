@@ -71,6 +71,20 @@ node src/cli.js decisions push --file /tmp/decisions.json  # replaces the whole 
 
 The Sunday review also sees decisions in the next 14 days and names one that falls in the coming week.
 
+## Home
+
+`/home` ties it together behind the Google sign-in that protects `/summaries` (same allow-list, same session; signing in lands here, and `/` redirects here). It shows:
+
+- this week's commitments, and next week's once Sunday's review has proposed them, with the same Accept / Decline buttons as the review page (a scored week shows as a scorecard);
+- follow-through for the last eight weeks;
+- the latest review, nutrition & training check-in, midweek check, month and Claude Code summary;
+- the next open decisions, with a link to each brief once it exists;
+- the whole archive.
+
+`/decisions` is the decision register as a page: add a decision, edit it, and record the outcome (`/decisions/new`, `/decisions/<id>`). An id is made from the title and never changes. The CLI's `decisions pull` / `push` still work and replace the whole list.
+
+Every form post needs the session cookie (`SameSite=Lax`) plus a token derived from it, and a cross-site `Origin` is refused. With `GOOGLE_CLIENT_ID` or `SUMMARIES_ALLOWED_EMAILS` unset these routes are a 404, like `/summaries`.
+
 ## Pieces
 
 - `src/sources.js` calls the five endpoints. It never follows redirects with a token.
@@ -88,6 +102,7 @@ The Sunday review also sees decisions in the next 14 days and names one that fal
 - `src/commitments.js` validates and stores the commitments loop (propose, decide, score, history).
 - `src/posts.js` validates, stores and emails the posts; `src/decisions.js` validates and stores the decision register.
 - `routine/MIDWEEK.md`, `routine/MONTHLY.md` and `routine/CHECKIN.md` hold the other routines' steps and writing rules.
+- `src/home.js` serves `/home` and `/decisions` for the signed-in owner.
 - `src/server.js` is the review site:
   - `POST /api/reviews` takes the ingest token, validates the review and stores it. It emails at most once per week, even if two posts race.
   - `GET /r/<monday>?t=…` and `GET /archive?t=…` serve HMAC-signed private pages.
