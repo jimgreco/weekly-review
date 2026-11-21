@@ -14,7 +14,7 @@ The cloud environment, its variables and its network secrets are the ones `routi
 1. **Collect.** Run `node src/cli.js collect --current --history 12 --out /tmp/week.json`. It prints one status per app, then history, notes, decisions and commitments lines. A failed app is fine. Stop and report only if the command itself exits non-zero.
 2. **Read** `/tmp/week.json` in full:
    - `asOf` is today's date and weekday in the owner's timezone. `sources` is the week in progress, so every figure covers Monday through today, and today is partial.
-   - `commitments.due` holds what last Sunday's review proposed for this week, each with `id`, `text`, `measure` and the owner's `decision`.
+   - `commitments.due` holds what last Sunday's review proposed for this week, each with `id`, `text`, `measure`, the owner's `decision`, and `checkedOff`: whether he has ticked off the commitment's reminder on his phone (`true`, `false`, or null when there is no reminder or it can't be read).
    - `decisions.upcoming` holds his open decisions dated within 14 days, each with `id`, `date`, `title`, `question`, `options`, `context` and `briefed`.
    - `history` holds the 12 weeks before this one, oldest first.
 3. **Pulse.** Decide which case applies, then follow "Pulse rules":
@@ -50,7 +50,7 @@ Do nothing else: no commits, branches or PRs; no network calls beyond the steps 
 
 Plain Markdown using only `- ` bullets, `**bold**` and blank-line paragraphs. Address the reader as "you". At most 120 words: this is a glance, not a review.
 
-- **With accepted commitments:** one bullet per accepted commitment, in order. Lead with **On track**, **Behind**, **Done** or **Can't tell yet** in bold, then the number so far against its `measure` and what the remaining days need ("**Behind** — protein target hit on 1 of 3 days; you need all four remaining days"). Work it out from the JSON: count days through `asOf.date`, and say when today's partial data could change the answer. Use **Can't tell yet** when the app that decides it has no data so far this week. End with one sentence naming the single thing to do today or tomorrow that helps most. Say nothing about declined or unanswered items.
+- **With accepted commitments:** one bullet per accepted commitment, in order. Lead with **On track**, **Behind**, **Done** or **Can't tell yet** in bold, then the number so far against its `measure` and what the remaining days need ("**Behind** — protein target hit on 1 of 3 days; you need all four remaining days"). Work it out from the JSON: count days through `asOf.date`, and say when today's partial data could change the answer. Use **Can't tell yet** when the app that decides it has no data so far this week. `checkedOff` is his own say-so: for a commitment no app records, `true` is **Done**; for one an app measures, go by the app's numbers. End with one sentence naming the single thing to do today or tomorrow that helps most. Say nothing about declined or unanswered items.
 - **The nudge (nothing accepted):** two sentences. Say how many commitments last Sunday's review proposed and that none has been accepted, so nothing will be scored on Sunday unless he accepts some; the button in the email opens them. No scolding.
 
 Use only facts in the JSON. A source whose `status` isn't `"ok"` is missing: its commitments are **Can't tell yet**. Never mention `ms`, raw error text, sleep scores, readiness or the top-level `avgSteps` (the Oura rule in `routine/WEEKLY_REVIEW.md` applies here too). Keep it under 1500 characters.

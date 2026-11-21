@@ -46,7 +46,9 @@ Each source fails on its own. A broken, slow or unconfigured app shows a short n
 2. **Decide.** The review page lists them under "Commitments for the coming week" with Accept and Decline buttons (plain form posts, no script; `Change` undoes a choice). Only accepted ones count. The private link is the credential, as it is for reading the page.
 3. **Score.** Next Sunday `collect` reads them back (`GET /api/commitments`) into `review.commitments.due`, with the follow-through of the eight weeks before in `commitments.history`. The routine judges each accepted one against the week's data, writes `## Last week's commitments`, and posts the outcomes as `results` (`hit`, `partial`, `miss`, or `unknown` when the data to judge it is missing). That page then shows the scorecard, and the week is closed to further changes.
 
-Commitments are stored one file per week in `DATA_DIR/commitments/<monday>.json`, named for the week they are for, apart from the stored review: re-publishing a review keeps your decisions (matched by unchanged text). Declined and unanswered proposals are never scored. Nothing is pushed into the other apps yet.
+Commitments are stored one file per week in `DATA_DIR/commitments/<monday>.json`, named for the week they are for, apart from the stored review: re-publishing a review keeps your decisions (matched by unchanged text). Declined and unanswered proposals are never scored.
+
+**Reminders.** With `TASKS_API_URL` and `TASKS_COMMITMENTS_TOKEN` set, every change to a week's commitments is sent to Task Sidekick (`jimgreco/reminders-ai`, `PUT /api/commitments?week=<monday>`): the accepted ones, or none once the week is scored. The owner's iPhone makes a reminder for each in a "Weekly Commitments" list, due that Sunday, removes the reminder of one he un-accepts, and clears the still-open ones when the week is scored. `GET /api/commitments` on this site then carries `checkedOff` and `checkedOffAt` on each item, read from Task Sidekick at that moment, so the routines can use a check-off as evidence for a commitment no app measures. Sending is best effort (retried three times over about a minute, then dropped until the next change) and never holds up the page; with the variables unset, or Task Sidekick down, everything else works as before. Nothing is pushed into Ritual Cue or Week of Us yet.
 
 ## Between the reviews
 
@@ -101,6 +103,7 @@ Every form post needs the session cookie (`SameSite=Lax`) plus a token derived f
 - `routine/WEEKLY_REVIEW.md` holds the routine's steps and the narrative rules. The routine also has **read-only** Gmail, Google Calendar and Drive/Docs/Sheets/Slides connectors (write tools are excluded in the routine's connector settings) for week context in `## Beyond the apps` and `## Next week`. The routine's prompt just points at it.
 - `routine/CLAUDE_CODE_SUMMARY.md` holds the Mac task's steps and summary rules; `scripts/claude-code-digest.mjs` builds the local digest it summarises (typed messages and final replies only, secrets redacted, capped at ~60k chars; never tool inputs or outputs).
 - `src/commitments.js` validates and stores the commitments loop (propose, decide, score, history).
+- `src/tasks.js` sends accepted commitments to Task Sidekick and reads the check-offs back.
 - `src/posts.js` validates, stores and emails the posts; `src/decisions.js` validates and stores the decision register.
 - `routine/MIDWEEK.md`, `routine/MONTHLY.md` and `routine/CHECKIN.md` hold the other routines' steps and writing rules.
 - `src/home.js` serves `/home` and `/decisions` for the signed-in owner.
@@ -110,12 +113,12 @@ Every form post needs the session cookie (`SameSite=Lax`) plus a token derived f
   - `POST /r/<monday>/commitments?t=…` (form fields `id`, `decision` = `accept`, `decline` or `undo`) records a choice on one of the commitments that review proposed and redirects back to the page. It takes the page's own link token and refuses a cross-site `Origin`.
   - `POST /api/posts` takes the ingest token and a `{kind, key, text}` post, stores it and emails it at most once. A decision brief must name a decision in the register. `GET /p/<kind>/<key>?t=…` serves it.
   - `GET /api/decisions` returns the register (ingest or notes token) with a `briefed` flag per decision; `PUT /api/decisions` replaces it (notes token only, so the cloud routines can read but never write it).
-  - `GET /api/commitments?week=<monday>` returns that week's commitments and the earlier weeks' follow-through counts to the routine, with the ingest token.
+  - `GET /api/commitments?week=<monday>` returns that week's commitments and the earlier weeks' follow-through counts to the routine, with the ingest token. Each item carries `checkedOff` (true, false, or null when unknown) from Task Sidekick.
   - `PUT /api/notes/claude-code?week=<monday>` takes the notes token (`NOTES_TOKEN_SHA256`) and stores the Mac's summary as `DATA_DIR/notes/<monday>/claude-code.json`, replacing any earlier one. `GET /api/notes?week=<monday>` returns it to the routine with the ingest token. Notes are never shown on the review page or copied into the stored review.
   - `/summaries` (`src/summaries.js`, `src/google.js`) lets the owner read the stored Claude Code summaries behind Google sign-in. `GET /summaries/login` shows the Google Identity Services button; `POST /summaries/auth` checks the GIS double-submit CSRF token and verifies the ID token locally (RS256 against Google's cached JWKS; issuer, audience = `GOOGLE_CLIENT_ID`, expiry, `email_verified`, and the email on `SUMMARIES_ALLOWED_EMAILS`), then sets a 30-day `__Host-wr_summaries` cookie (HMAC with a key derived from `LINK_SECRET`; `HttpOnly; Secure; SameSite=Lax`). `GET /summaries` lists weeks with a summary, newest first; `GET /summaries/<monday>` shows one with links to the next older and newer. `POST /summaries/logout` needs a same-origin `Origin`. Unset `GOOGLE_CLIENT_ID` or allow-list = every `/summaries` route is a 404.
   - `GET /health`.
 
-The site has no database access and no Claude key. The cloud routine has no database access either, and holds no tokens: they are network secrets on its cloud environment, added to requests by the agent proxy outside the session.
+The site has no database access and no Claude key. The one token it holds in plaintext is `TASKS_COMMITMENTS_TOKEN`, which works only on Task Sidekick's `/api/commitments`. The cloud routine has no database access either, and holds no tokens: they are network secrets on its cloud environment, added to requests by the agent proxy outside the session.
 
 ## Run locally
 
