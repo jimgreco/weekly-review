@@ -208,8 +208,24 @@ The cloud routine needs nothing new: it reads notes with the ingest token, which
    Then recreate `weekly-review` straight away with the running container's recorded Compose chain, exactly as in §4 step 2 (`docker-compose -f <each recorded file> --profile weekly-review up -d --no-deps weekly-review`), so the next release's drift check doesn't refuse.
 4. **Check:** open `https://review.jim-greco.com/summaries` on the phone and on the Mac. It redirects to the sign-in page; sign in with `jgreco@gmail.com` and the list of weeks appears. Another Google account gets "This account can't view summaries." Sign out clears the session.
 
+## 6. Reminders for accepted commitments (Task Sidekick, optional)
+
+Accepted commitments become reminders on the iPhone, and their check-offs come back for scoring (`src/tasks.js`). The site calls Task Sidekick; the cloud routines need no change.
+
+1. **Task Sidekick first:** follow `deploy/RUNBOOK.md` §7 in `jimgreco/reminders-ai` (migration, token, its two variables). It makes `~/wr-tokens/tasks-commitments.token`.
+2. **Site:** over the pinned SSH connection, under `~/deploy/.app-release.lock`, add to `~/deploy/weekly-review.env` (mode 600), without printing the token:
+
+   ```
+   TASKS_API_URL=https://tasks.jim-greco.com
+   TASKS_COMMITMENTS_TOKEN=<contents of tasks-commitments.token>
+   ```
+
+   Then recreate `weekly-review` with the running container's recorded Compose chain, exactly as in §4 step 2.
+3. **Check:** on `/home`, accept one of the week's commitments, then open Task Sidekick on the iPhone (version with "Weekly Commitments" support). The reminder appears in the "Weekly Commitments" list, due Sunday. Un-accept it with **Change** and it goes away on the next sync. `docker logs` for `weekly-review` shows a `[tasks]` line only when a send fails.
+
 ## Rotating or revoking
 
+- **Task Sidekick link:** make a new token (reminders-ai `deploy/RUNBOOK.md` §7), replace `COMMITMENTS_TOKEN_SHA256` there and `TASKS_COMMITMENTS_TOKEN` in `weekly-review.env`, and recreate both containers. Clearing either of the site's two variables turns the link off; reminders already made stay in Reminders.
 - **One app:** replace its `~/deploy/weekly-summary-<service>.yml` hash (then recreate that service with its recorded files) and its network secret in the cloud environment. Clearing the variable turns that app's endpoint off; the review then shows the app as unavailable.
 - **Ingest:** replace `INGEST_TOKEN_SHA256` in `weekly-review.env` and recreate the container.
 - **Midweek and monthly routines:** two more cloud routines in the weekly routine's environment, with no connectors: "Midweek Pulse" (Wednesday 12:47 pm America/New_York, prompt "Follow routine/MIDWEEK.md in this repository exactly.") and "Monthly Review" (1st of the month 5:46 pm, prompt "Follow routine/MONTHLY.md in this repository exactly."). To stop either, disable its routine. Posts are stored under `weekly-review-data/posts/<kind>/<key>.json`; delete a file to withdraw one.

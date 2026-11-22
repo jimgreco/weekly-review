@@ -13,6 +13,7 @@ import { createNotesStore, noteWeek, validateNote } from './notes.js';
 import { createSummaries } from './summaries.js';
 import { createHome } from './home.js';
 import { CommitmentConflict, createCommitmentsStore, forRoutine } from './commitments.js';
+import { createTasksLink, withChecks } from './tasks.js';
 
 const MAX_NOTE_BODY_BYTES = 64 * 1024;
 const MAX_FORM_BYTES = 4 * 1024;
@@ -63,7 +64,9 @@ async function readForm(req) {
 }
 
 export function createHandler(config, store, {
-  commitments = createCommitmentsStore(config.dataDir || './data'),
+  // Accepted commitments become reminders in Task Sidekick; every change to a week is sent there.
+  tasks = createTasksLink(config),
+  commitments = createCommitmentsStore(config.dataDir || './data', { onChange: (record) => tasks.sync(record) }),
   publish = createPublisher(config, store, { commitments }),
   notes = createNotesStore(config.dataDir || './data'),
   summaries = createSummaries(config, notes),
@@ -128,9 +131,11 @@ export function createHandler(config, store, {
         if (req.method !== 'GET') return sendJson(res, 405, { error: 'method not allowed' });
         let week;
         try { week = noteWeek(url.searchParams.get('week')); } catch (error) { return sendJson(res, 400, { error: error.message }); }
+        // With each item, whether the owner checked off its reminder (null when unknown).
+        const due = forRoutine(await commitments.load(week));
         return sendJson(res, 200, {
           week,
-          due: forRoutine(await commitments.load(week)),
+          due: withChecks(due, due?.items.some((c) => c.decision === 'accepted') ? await tasks.checks(week) : null),
           history: await commitments.history(week, HISTORY_WEEKS),
         });
       }

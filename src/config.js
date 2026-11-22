@@ -31,6 +31,10 @@ export function loadConfig(env = process.env) {
     googleClientId: (env.GOOGLE_CLIENT_ID || '').trim() || null,
     summariesAllowedEmails: (env.SUMMARIES_ALLOWED_EMAILS || '').split(',').map((e) => e.trim().toLowerCase()).filter(Boolean),
     emailFrom: env.REVIEW_EMAIL_FROM || 'Weekly Review <review@weekofus.com>',
+    // Task Sidekick, which turns accepted commitments into reminders (src/tasks.js).
+    // Either unset = nothing is sent and no check-offs are read.
+    tasksUrl: (env.TASKS_API_URL || '').replace(/\/$/, '') || null,
+    tasksToken: env.TASKS_COMMITMENTS_TOKEN || null,
 
     // Routine side.
     sources,

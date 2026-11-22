@@ -94,7 +94,12 @@ export function tally(record) {
   };
 }
 
-export function createCommitmentsStore(dataDir, { now = () => new Date() } = {}) {
+/**
+ * `onChange(record)` is called after every stored change to a week (proposals,
+ * a decision, a score), without being waited for. The site uses it to keep the
+ * owner's reminders in step (src/tasks.js).
+ */
+export function createCommitmentsStore(dataDir, { now = () => new Date(), onChange = null } = {}) {
   const dir = path.resolve(dataDir, 'commitments');
   const file = (week) => path.join(dir, `${weekRange(week).start}.json`); // throws unless a Monday
 
@@ -112,6 +117,11 @@ export function createCommitmentsStore(dataDir, { now = () => new Date() } = {})
     const tmp = `${target}.${process.pid}.${Date.now()}.tmp`;
     await writeFile(tmp, JSON.stringify(record, null, 2), { mode: 0o600 });
     await rename(tmp, target);
+    if (onChange) {
+      try {
+        Promise.resolve(onChange(structuredClone(record))).catch(() => {});
+      } catch { /* a listener never breaks a save */ }
+    }
   }
 
   // One read-modify-write at a time, so a decision on the page and a publish
